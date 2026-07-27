@@ -18,11 +18,17 @@
   .hero h1{margin:0;font-size:1.55rem;font-weight:800;letter-spacing:-.5px;}
   .hero h1 span{color:var(--gold);}
   .hero p{margin:4px 0 0;color:#d8cfe9;font-size:.86rem;}
-  .pill{display:inline-flex;align-items:center;gap:6px;font-size:.72rem;font-weight:800;
-    padding:5px 11px;border-radius:999px;background:rgba(255,255,255,.14);color:#fff;white-space:nowrap;}
-  .pill .dot{width:8px;height:8px;border-radius:50%;background:#9c93b5;}
+  .pill{display:inline-flex;align-items:center;gap:7px;font-size:.72rem;font-weight:800;
+    padding:5px 11px;border-radius:999px;background:rgba(255,255,255,.14);color:#fff;white-space:nowrap;
+    border:none;font-family:inherit;cursor:pointer;}
+  .pill .dot{width:8px;height:8px;border-radius:50%;background:#9c93b5;flex:none;}
   .pill.synced .dot{background:#57e08a;} .pill.local .dot{background:#c9c2d8;}
   .pill.warn .dot{background:var(--gold);}
+  .pill.update{background:rgba(87,224,138,.22);}
+  .pill.update .dot{background:#57e08a;animation:blip 1.1s ease-in-out infinite;}
+  @keyframes blip{0%,100%{box-shadow:0 0 0 0 rgba(87,224,138,.7);}50%{box-shadow:0 0 0 5px rgba(87,224,138,0);}}
+  .pill .build{opacity:.72;font-weight:700;padding-left:2px;border-left:1px solid rgba(255,255,255,.28);margin-left:1px;padding-left:8px;}
+  @media(prefers-reduced-motion:reduce){.pill.update .dot{animation:none;}}
   .wrap{max-width:1040px;margin:0 auto;padding:20px 18px 70px;}
 
   .panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:18px;}
@@ -115,7 +121,9 @@
       <h1>Vikings Season Ticket Board <span>·</span> 2026 Home Games</h1>
       <p>4 seats · 1 preseason + 9 regular-season home games at U.S. Bank Stadium</p>
     </div>
-    <span class="pill local" id="syncPill"><span class="dot"></span><span id="syncText">Local only</span></span>
+    <button class="pill local" id="syncPill" onclick="onPillClick()" title="Sync status — tap to refresh">
+      <span class="dot"></span><span id="syncText">Local only</span><span class="build" id="buildText">Build 1</span>
+    </button>
   </div>
 </header>
 
@@ -190,8 +198,15 @@
    Realtime Database URL here and deploy. Then every visitor
    is synced automatically without touching the setup panel.
    ========================================================= */
-const DEFAULT_DB = "https://vikingsticketsss-default-rtdb.firebaseio.com";              // e.g. "https://your-project-default-rtdb.firebaseio.com"
+const DEFAULT_DB = "";              // e.g. "https://your-project-default-rtdb.firebaseio.com"
 const AUTH = "";                    // optional RTDB auth token / secret; leave "" if rules are open
+
+/* BUILD — bump this by 1 every time you deploy a new version of index.html.
+   Clients still running an older build see a pulsing green "Update ready" light. */
+const BUILD = 1;
+let serverBuild = null;             // highest build any client has advertised
+let updateAvailable = false;
+let connCls = "local", connText = "Local only";
 
 /* runtime DB url: hard-coded default wins; else a value saved via the setup panel */
 let FIREBASE_DB = DEFAULT_DB || localStorage.getItem("viktix_db") || "";
@@ -270,6 +285,8 @@ async function cloudLoad(){
       if(data.assign) applyAssignMap(data.assign);
       saveLocal(); renderAll();
     }
+    if(data && data._meta && data._meta.build!=null) setServerBuild(data._meta.build);
+    advertiseBuild();
   }catch(e){ setStatus("warn","Offline"); }
 }
 function applyAssignMap(obj){
@@ -303,7 +320,12 @@ function applyEvent(msg, isPatch){
     if(data){
       state.roster = Array.isArray(data.roster) ? data.roster : state.roster;
       if(data.assign) applyAssignMap(data.assign);
+      if(data._meta && data._meta.build!=null) setServerBuild(data._meta.build);
     }
+  } else if(path==="/_meta"){
+    if(data && data.build!=null) setServerBuild(data.build);
+  } else if(path==="/_meta/build"){
+    setServerBuild(data);
   } else if(path==="/roster"){
     state.roster = Array.isArray(data) ? data : (data ? Object.values(data) : []);
   } else if(path==="/assign"){
@@ -319,10 +341,37 @@ function applyEvent(msg, isPatch){
 let pollTimer=null;
 function pollFallback(){ if(pollTimer) clearInterval(pollTimer); pollTimer=setInterval(cloudLoad, 5000); }
 
-function setStatus(cls, text){
+function setStatus(cls, text){ connCls=cls; connText=text; paintPill(); }
+function paintPill(){
   const pill=document.getElementById("syncPill");
-  pill.className = "pill " + cls;
-  document.getElementById("syncText").textContent = text;
+  const txt=document.getElementById("syncText");
+  const bld=document.getElementById("buildText");
+  if(updateAvailable){
+    pill.className="pill update";
+    txt.textContent="Update ready — tap to refresh";
+    bld.textContent="Build "+BUILD+" → "+serverBuild;
+  }else{
+    pill.className="pill "+connCls;
+    txt.textContent=connText;
+    bld.textContent="Build "+BUILD;
+  }
+}
+/* build / update-available detection (shared via Firebase /_meta/build) */
+function setServerBuild(b){
+  b = Number(b);
+  if(!isFinite(b)) return;
+  serverBuild = (serverBuild==null) ? b : Math.max(serverBuild, b);
+  updateAvailable = serverBuild > BUILD;
+  paintPill();
+}
+function advertiseBuild(){
+  if(!FIREBASE_DB) return;
+  if(serverBuild==null || BUILD>serverBuild) cloudPut("_meta/build", BUILD);
+}
+function onPillClick(){
+  if(updateAvailable){ location.reload(); return; }
+  if(FIREBASE_DB){ cloudLoad(); toast("Refreshed"); }
+  else toast("Local only — set up sync to share");
 }
 
 /* ---- Setup panel ---- */
@@ -476,6 +525,7 @@ function renderAll(){ renderRoster(); renderGames(); renderWho(); renderOpen(); 
 window.addEventListener("focus", ()=>{ if(FIREBASE_DB && !es) cloudLoad(); });
 
 renderAll();
+paintPill();
 startStream();
 </script>
 </body>
