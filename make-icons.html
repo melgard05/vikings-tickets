@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Vikings Tix — icon maker</title>
+<style>
+ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+   background:#f6f4fa;color:#1a1626;margin:0;padding:28px;}
+ h1{font-size:1.2rem;margin:0 0 6px;color:#4F2683;}
+ p{color:#6b6577;font-size:.9rem;margin:0 0 18px;max-width:640px;line-height:1.5;}
+ .row{display:flex;gap:18px;flex-wrap:wrap;}
+ .card{background:#fff;border:1px solid #e4e0ec;border-radius:12px;padding:14px;text-align:center;}
+ canvas{display:block;width:120px;height:120px;image-rendering:auto;border-radius:8px;background:#eee;}
+ .name{font-size:.72rem;font-weight:700;color:#4F2683;margin:9px 0 8px;font-family:ui-monospace,Menlo,monospace;}
+ button{border:none;background:#4F2683;color:#fff;border-radius:8px;padding:7px 12px;
+   font-weight:700;font-size:.78rem;cursor:pointer;font-family:inherit;}
+ button:hover{background:#3a1c63;}
+ .all{background:#FFC62F;color:#3a1c63;padding:10px 18px;font-size:.9rem;margin-bottom:20px;}
+</style>
+</head>
+<body>
+<h1>Vikings Tix — icon maker</h1>
+<p>Draws the four app icons right here in your browser, so nothing is fetched from the internet.
+Click <b>Save all four</b>, then upload the saved PNGs to your repo with
+<b>Add file → Upload files</b>. File names must stay exactly as shown.</p>
+
+<button class="all" onclick="saveAll()">Save all four</button>
+<div class="row" id="row"></div>
+
+<script>
+const PURPLE="#4F2683", GOLD="#FFC62F";
+const SPECS=[
+  {name:"icon-192.png",          size:192, bleed:.14, rounded:true},
+  {name:"icon-512.png",          size:512, bleed:.14, rounded:true},
+  {name:"icon-maskable-512.png", size:512, bleed:.20, rounded:false},
+  {name:"apple-touch-icon.png",  size:180, bleed:.14, rounded:false}
+];
+
+function rr(c,x,y,w,h,r){c.beginPath();c.moveTo(x+r,y);c.arcTo(x+w,y,x+w,y+h,r);
+  c.arcTo(x+w,y+h,x,y+h,r);c.arcTo(x,y+h,x,y,r);c.arcTo(x,y,x+w,y,r);c.closePath();c.fill();}
+
+function draw(cv,spec){
+  const S=spec.size; cv.width=S; cv.height=S;
+  const c=cv.getContext("2d");
+  c.clearRect(0,0,S,S); c.fillStyle=PURPLE;
+  if(spec.rounded) rr(c,0,0,S,S,S*0.22); else c.fillRect(0,0,S,S);
+  const inset=S*spec.bleed, w=S-2*inset, cx=S/2;
+  const top=inset+w*0.06, bot=inset+w*0.66, half=w*0.34, th=w*0.155;
+  c.fillStyle=GOLD; c.beginPath();
+  c.moveTo(cx-half,top); c.lineTo(cx-half+th,top); c.lineTo(cx,bot-th*0.55);
+  c.lineTo(cx+half-th,top); c.lineTo(cx+half,top); c.lineTo(cx,bot);
+  c.closePath(); c.fill();
+  const pip=w*0.115, gap=w*0.055; let x=cx-(4*pip+3*gap)/2; const y=inset+w*0.775;
+  for(let i=0;i<4;i++){ rr(c,x,y,pip,pip,pip*0.28); x+=pip+gap; }
+}
+
+function save(cv,name){
+  cv.toBlob(b=>{
+    const a=document.createElement("a");
+    a.href=URL.createObjectURL(b); a.download=name; a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+  },"image/png");
+}
+const made=[];
+SPECS.forEach(s=>{
+  const d=document.createElement("div"); d.className="card";
+  const cv=document.createElement("canvas"); draw(cv,s);
+  const n=document.createElement("div"); n.className="name"; n.textContent=s.name;
+  const b=document.createElement("button"); b.textContent="Save"; b.onclick=()=>save(cv,s.name);
+  d.append(cv,n,b); document.getElementById("row").append(d);
+  made.push([cv,s.name]);
+});
+function saveAll(){ made.forEach(([cv,n],i)=> setTimeout(()=>save(cv,n), i*450)); }
+</script>
+</body>
+</html>

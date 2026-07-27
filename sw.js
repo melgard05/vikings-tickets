@@ -1,8 +1,10 @@
 /* Vikings Season Ticket Board — service worker
    BUMP THIS to the same number as BUILD in index.html on every deploy. */
-const BUILD = 1;
+const BUILD = 2;
 const CACHE = "viktix-v" + BUILD;
-const SHELL = ["./", "./index.html", "./manifest.webmanifest"];
+const SHELL = ["./", "./index.html", "./manifest.webmanifest",
+               "./icon-192.png", "./icon-512.png", "./icon-maskable-512.png",
+               "./apple-touch-icon.png"];
 
 self.addEventListener("install", e => {
   e.waitUntil(
