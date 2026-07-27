@@ -202,6 +202,7 @@
     <div style="display:flex;gap:10px;margin-bottom:12px;">
       <button class="btn btn-primary" onclick="saveSetup()">Save &amp; sync</button>
       <button class="btn btn-ghost" onclick="runTest()">Test connection</button>
+      <button class="btn btn-ghost" onclick="hardRefresh()">Force refresh</button>
       <button class="btn btn-ghost" onclick="toggleSetup()">Close</button>
     </div>
     <div class="hint">
@@ -286,21 +287,48 @@ let dbSource = "none";              // where the active URL came from, shown in 
    timestamp it needs no cooperation from the host's response headers: deploy different
    code and the hash changes, which rotates the service worker cache and lights the
    green "Update ready" pill. Resolved asynchronously, so it starts as null. */
-let BUILD = null;
-let BUILD_LABEL = "…";
+/* Two different things get hashed here, and conflating them was hiding a stale page:
+   RUNNING is the code executing in this tab right now, DEPLOYED is what's on the
+   server. The pill shows RUNNING, because that's what the person is actually using.
+   An update is offered only when the two genuinely differ. */
+const RUNNING_SRC = (function(){
+  try{
+    if(document.currentScript && document.currentScript.textContent)
+      return document.currentScript.textContent;
+    const ss=document.getElementsByTagName("script");
+    return ss.length ? (ss[ss.length-1].textContent||"") : "";
+  }catch(e){ return ""; }
+})();
 function hash32(s){
   let h=0x811c9dc5;
   for(let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,0x01000193); }
   return (h>>>0).toString(16).padStart(8,"0").slice(0,6);
+}
+const BUILD = RUNNING_SRC ? hash32(RUNNING_SRC) : null;
+const BUILD_LABEL = BUILD || "local";
+let deployedBuild = null;
+
+/* Pull the inline script out of a copy of this page so the same thing is hashed
+   on both sides. This has to be a real HTML parse: scanning the text for a script
+   tag finds the matching literal inside this very function first. */
+function extractInlineScript(txt){
+  try{
+    const doc=new DOMParser().parseFromString(txt,"text/html");
+    const inline=doc.querySelectorAll("script:not([src])");
+    if(inline.length) return inline[inline.length-1].textContent;
+  }catch(e){}
+  return null;
 }
 async function resolveBuild(){
   try{
     // _bt marks this as a build probe so the service worker never answers it from cache
     const r=await fetch(location.pathname+"?_bt=1",{cache:"no-store"});
     if(!r.ok) throw new Error("probe failed");
-    BUILD=hash32(await r.text());
-  }catch(e){ BUILD=null; }
-  BUILD_LABEL = BUILD || "local";
+    const src=extractInlineScript(await r.text());
+    deployedBuild = src ? hash32(src) : null;
+    // A difference means this tab is running older code than what's published.
+    if(deployedBuild && BUILD && deployedBuild!==BUILD) markUpdate();
+  }catch(e){ deployedBuild=null; }
   paintPill();
   return BUILD;
 }
@@ -528,6 +556,8 @@ function tryLiveStream(){
    connection — refreshes immediately rather than waiting for the next poll, and
    revives the live stream if it died while we were away. */
 function onResume(){
+  if(swReg){ try{ swReg.update(); }catch(e){} }
+  resolveBuild();               // notice a deploy without needing a manual refresh
   if(!FIREBASE_DB) return;
   cloudLoad();
   // readyState 2 is CLOSED. Don't tear down a stream that is merely still connecting,
@@ -589,7 +619,7 @@ function paintPill(){
   if(updateAvailable){
     pill.className="pill update";
     txt.textContent="Update ready — tap to refresh";
-    bld.textContent="Build "+BUILD_LABEL;
+    bld.textContent="Build "+BUILD_LABEL+(deployedBuild?" → "+deployedBuild:"");
   }else{
     pill.className="pill "+connCls;
     txt.textContent=connText;
@@ -599,11 +629,36 @@ function paintPill(){
 /* Update detection is handled by the service worker, which compares the actual
    deployed bytes — more reliable than any number we could pass around. */
 function markUpdate(){ updateAvailable=true; paintPill(); }
-let swWaiting = null;
+/* Last resort for a service worker that won't hand over: drop every worker and
+   cache for this site and reload from the network. */
+async function hardRefresh(){
+  toast("Clearing cached version…");
+  try{
+    if("serviceWorker" in navigator){
+      const regs=await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r=>r.unregister()));
+    }
+    if(window.caches){
+      const keys=await caches.keys();
+      await Promise.all(keys.map(k=>caches.delete(k)));
+    }
+  }catch(e){}
+  const u=new URL(location.href);
+  u.searchParams.set("_r", Date.now());   // defeat the browser's own HTTP cache
+  location.replace(u.toString());
+}
+
+let swWaiting = null, swReg = null;
 function onPillClick(){
   if(updateAvailable){
-    if(swWaiting){ swWaiting.postMessage("skipWaiting"); toast("Updating…"); }
-    else location.reload();
+    if(swWaiting){
+      swWaiting.postMessage("skipWaiting");
+      toast("Updating…");
+      // If the worker doesn't take over promptly, stop waiting on it and force it.
+      setTimeout(()=>{ if(!document.hidden) hardRefresh(); }, 2500);
+    }else{
+      hardRefresh();
+    }
     return;
   }
   if(syncProblem){ openSetup(); return; }        // show what's actually wrong
@@ -969,6 +1024,7 @@ try{
   startStream();
   window.__viktixBooted = true;
   resolveBuild().then(registerSW);
+  setInterval(resolveBuild, 5*60*1000);   // notice new deploys without a manual reload
   if(!LS.ok) toast("This browser is blocking storage — changes won't be kept after you close the tab");
 }catch(err){
   bootError(err.message||String(err));
@@ -1025,7 +1081,8 @@ function registerSW(){
         }
       });
     });
-    setInterval(()=>reg.update(), 60*60*1000);       // check hourly
+    setInterval(()=>reg.update(), 15*60*1000);       // check periodically
+    swReg = reg;
   }).catch(()=>{});
   let reloading=false;
   navigator.serviceWorker.addEventListener("controllerchange", ()=>{
