@@ -463,43 +463,69 @@ async function testConnection(){
 
 function startStream(){
   if(es){ es.close(); es=null; }
-  if(pollTimer){ clearInterval(pollTimer); pollTimer=null; }
   if(watchdog){ clearTimeout(watchdog); watchdog=null; }
   liveOK=false; syncProblem=null;
-  if(!FIREBASE_DB){ setStatus("local","Local only"); return; }
+  if(!FIREBASE_DB){ stopPolling(); setStatus("local","Local only"); return; }
 
   setStatus("warn","Connecting…");
-  // Polling is the dependable path, so it starts immediately and the board is
-  // syncing within seconds regardless of what the live stream does. The stream is
-  // only an upgrade: if it connects, updates become instant and polling stops.
   cloudLoad();
-  pollTimer=setInterval(cloudLoad, 5000);
+  setPollRate();        // polling starts now and never fully stops
   tryLiveStream();
 }
+/* Polling always runs. Fast when it's the only channel, slow as a safety net when
+   the live stream is up — a stream can die silently (phone sleeping, switching
+   between wifi and cellular) and without this the app would sit there looking
+   "Synced" while quietly receiving nothing. */
+function setPollRate(){
+  if(pollTimer) clearInterval(pollTimer);
+  pollTimer=setInterval(cloudLoad, liveOK ? 20000 : 5000);
+}
+function stopPolling(){ if(pollTimer){ clearInterval(pollTimer); pollTimer=null; } }
+
 function tryLiveStream(){
-  if(!window.EventSource) return;      // no stream support — polling already covers it
+  if(!window.EventSource || !FIREBASE_DB) return;   // polling already covers it
+  if(es){ es.close(); es=null; }
   try{
-    es = new EventSource(dbUrl(""));
-    es.addEventListener("put",   e=> applyEvent(JSON.parse(e.data)));
-    es.addEventListener("patch", e=> applyEvent(JSON.parse(e.data), true));
-    es.onopen = ()=>{
-      liveOK=true; syncProblem=null;
-      if(pollTimer){ clearInterval(pollTimer); pollTimer=null; }   // live now, polling redundant
+    const src = es = new EventSource(dbUrl(""));
+    src.addEventListener("put",   e=>{ lastEventAt=Date.now(); applyEvent(JSON.parse(e.data)); });
+    src.addEventListener("patch", e=>{ lastEventAt=Date.now(); applyEvent(JSON.parse(e.data), true); });
+    src.onopen = ()=>{
+      if(es!==src) return;
+      liveOK=true; syncProblem=null; lastEventAt=Date.now();
       if(watchdog){ clearTimeout(watchdog); watchdog=null; }
+      setPollRate();                       // slow down, but keep polling
       setStatus("synced","Synced");
     };
-    // Deliberately quiet on error: polling is still running, so a failed stream is
-    // not a failed sync. The watchdog decides when to stop trying.
-    es.onerror = ()=>{};
-    // A blocked stream often connects and then hangs, firing one error and retrying
-    // forever, so waiting for repeated errors would wait forever. Time it out instead.
+    src.onerror = ()=>{
+      if(es!==src) return;
+      if(liveOK){                          // was working, now dropped — fall back openly
+        liveOK=false;
+        setPollRate();
+        setStatus("synced","Synced · polling");
+        cloudLoad();
+      }
+    };
+    // A blocked stream often connects then hangs, firing one error and retrying
+    // forever, so waiting on repeated errors would wait forever. Time it out.
     watchdog=setTimeout(()=>{
-      if(liveOK) return;
-      if(es){ es.close(); es=null; }
-      if(!pollTimer){ cloudLoad(); pollTimer=setInterval(cloudLoad, 5000); }
+      if(liveOK || es!==src) return;
+      src.close(); if(es===src) es=null;
+      setPollRate();
     }, 8000);
   }catch(e){ /* polling continues */ }
 }
+
+/* Coming back to the app — from a background tab, a locked phone, or a dropped
+   connection — refreshes immediately rather than waiting for the next poll, and
+   revives the live stream if it died while we were away. */
+function onResume(){
+  if(!FIREBASE_DB) return;
+  cloudLoad();
+  // readyState 2 is CLOSED. Don't tear down a stream that is merely still connecting,
+  // or the initial pageshow would churn a fresh connection on every load.
+  if(!liveOK && (!es || es.readyState===2)) tryLiveStream();
+}
+
 
 function applyEvent(msg, isPatch){
   if(!msg) return;
@@ -533,7 +559,7 @@ function applyEvent(msg, isPatch){
   }
   saveLocal(); renderAll();
 }
-let pollTimer=null, watchdog=null, liveOK=false;
+let pollTimer=null, watchdog=null, liveOK=false, lastEventAt=0;
 
 function setStatus(cls, text){ connCls=cls; connText=text; paintPill(); }
 function paintPill(){
@@ -890,7 +916,10 @@ function keepFocus(fn){
 }
 function renderAll(){ renderRoster(); renderDatalist(); keepFocus(renderGames); renderWho(); renderOpen(); }
 
-window.addEventListener("focus", ()=>{ if(FIREBASE_DB && !es) cloudLoad(); });
+window.addEventListener("focus", onResume);
+window.addEventListener("online", onResume);
+window.addEventListener("pageshow", onResume);
+document.addEventListener("visibilitychange", ()=>{ if(!document.hidden) onResume(); });
 
 function bootError(msg){
   const b=document.createElement("div");
