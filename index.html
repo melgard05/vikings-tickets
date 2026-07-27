@@ -132,6 +132,8 @@
     border-radius:8px;background:var(--open);}
   .setup-status .good{color:#1f8a4c;} .setup-status .bad{color:var(--warn);}
   .setup-status .warn2{color:#b26a00;}
+  .setup-status .tried{display:inline-block;margin-top:7px;font-family:ui-monospace,Menlo,monospace;
+    font-size:.72rem;color:var(--muted);word-break:break-all;}
   .setup code{background:var(--open);padding:1px 5px;border-radius:4px;font-size:.78rem;}
 
   #toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);opacity:0;
@@ -248,10 +250,26 @@
    Realtime Database URL here and deploy. Then every visitor
    is synced automatically without touching the setup panel.
    ========================================================= */
+/* The Firebase console often shows the database URL without "https://". Pasted that
+   way it's treated as a path on this site, so requests go to GitHub Pages and come
+   back 404. Normalize to scheme + host and drop anything else that got copied along. */
+function normalizeDbUrl(u){
+  let s=String(u==null?"":u).trim();
+  if(!s) return "";
+  s=s.replace(/^["'<(\s]+|["'>)\s]+$/g,"");        // stray quotes/brackets from copying
+  s=s.replace(/\.json.*$/i,"");                     // a pasted REST path
+  if(!/^https?:\/\//i.test(s)) s="https://"+s.replace(/^\/+/,"");
+  try{
+    const url=new URL(s);
+    if(!url.host) return "";
+    return url.protocol+"//"+url.host;              // host only — no path, query or hash
+  }catch(e){ return ""; }
+}
+
 /* Settings come from config.js so that replacing this file never wipes them.
    Order of precedence: config.js → a URL saved on this device via the setup panel. */
 const CFG = (typeof window.VIKTIX_CONFIG === "object" && window.VIKTIX_CONFIG) ? window.VIKTIX_CONFIG : null;
-const DEFAULT_DB = (CFG && typeof CFG.db === "string") ? CFG.db.trim() : "";
+const DEFAULT_DB = normalizeDbUrl(CFG && CFG.db);
 const AUTH = (CFG && typeof CFG.auth === "string") ? CFG.auth.trim() : "";
 let dbSource = "none";              // where the active URL came from, shown in the setup panel
 
@@ -299,7 +317,7 @@ const LS = (function(){
 })();
 
 /* runtime DB url: hard-coded default wins; else a value saved via the setup panel */
-let FIREBASE_DB = DEFAULT_DB || LS.get("viktix_db") || "";
+let FIREBASE_DB = DEFAULT_DB || normalizeDbUrl(LS.get("viktix_db")) || "";
 dbSource = DEFAULT_DB ? "config.js" : (FIREBASE_DB ? "this device only" : "none");
 
 /* board id comes from the ?board= link so a shared URL points everyone at one board */
@@ -378,18 +396,32 @@ function cloudPut(sub, value){
     .catch(()=> setStatus("warn","Offline"));
 }
 async function cloudLoad(){
-  if(!FIREBASE_DB) return;
+  if(!FIREBASE_DB) return false;
+  let r;
+  try{ r = await fetch(dbUrl("")); }
+  catch(e){ setStatus("warn","Offline"); return false; }
+  if(r.status===401 || r.status===403){
+    syncProblem="Your database rules are blocking this board. In Firebase → Realtime Database → Rules, allow read and write on \"viktix\", then press Publish.";
+    setStatus("warn","Sync blocked — tap"); return false;
+  }
+  if(r.status===404){
+    const host=(function(){ try{ return new URL(FIREBASE_DB).host; }catch(e){ return FIREBASE_DB; } })();
+    syncProblem="404 from "+host+". Use Test connection below to see the exact address being called.";
+    setStatus("warn","Sync blocked — tap"); return false;
+  }
+  if(!r.ok){ setStatus("warn","Sync error "+r.status); return false; }
   try{
-    const r = await fetch(dbUrl(""));
     const data = await r.json();
     if(data){
       if(Array.isArray(data.roster)) state.roster = tidyRoster(data.roster);
       if(data.assign) applyAssignMap(data.assign);
       if(data.received) applyReceivedMap(data.received);
-      if(data.received) applyReceivedMap(data.received);
       saveLocal(); renderAll();
     }
-  }catch(e){ setStatus("warn","Offline"); }
+  }catch(e){ /* empty or unparseable body is fine — an empty board reads as null */ }
+  syncProblem=null;
+  if(!liveOK) setStatus("synced","Synced · polling");
+  return true;
 }
 function applyReceivedMap(obj){
   obj=obj||{};
@@ -410,7 +442,14 @@ async function testConnection(){
     let m=txt; try{ m=JSON.parse(txt).error||txt; }catch(e){}
     return {ok:false, msg:"Database rules are blocking this ("+m+"). In Firebase → Realtime Database → Rules, allow read and write on \"viktix\", then press Publish."};
   }
-  if(r.status===404) return {ok:false, msg:"404 — that URL isn't a Realtime Database. Check for a typo, and that you copied the database URL rather than the project page."};
+  if(r.status===404){
+    const host=(function(){ try{ return new URL(FIREBASE_DB).host; }catch(e){ return FIREBASE_DB; } })();
+    let hint="Check the URL in config.js against the one shown at the top of the Data tab in Firebase.";
+    if(/\.firebaseio\.com$/i.test(host))
+      hint="If your database was created outside the us-central1 region, the working address ends in "+
+           ".firebasedatabase.app rather than .firebaseio.com — copy the exact one shown at the top of the Data tab.";
+    return {ok:false, msg:"404 from "+host+". "+hint};
+  }
   if(!r.ok) return {ok:false, msg:"HTTP "+r.status+" from the database."};
   // read worked; confirm writes are allowed too
   try{
@@ -425,37 +464,43 @@ async function testConnection(){
 function startStream(){
   if(es){ es.close(); es=null; }
   if(pollTimer){ clearInterval(pollTimer); pollTimer=null; }
-  syncProblem=null;
+  if(watchdog){ clearTimeout(watchdog); watchdog=null; }
+  liveOK=false; syncProblem=null;
   if(!FIREBASE_DB){ setStatus("local","Local only"); return; }
+
+  setStatus("warn","Connecting…");
+  // Polling is the dependable path, so it starts immediately and the board is
+  // syncing within seconds regardless of what the live stream does. The stream is
+  // only an upgrade: if it connects, updates become instant and polling stops.
   cloudLoad();
-  if(!window.EventSource){ goPolling(); return; }
-  let fails=0;
+  pollTimer=setInterval(cloudLoad, 5000);
+  tryLiveStream();
+}
+function tryLiveStream(){
+  if(!window.EventSource) return;      // no stream support — polling already covers it
   try{
     es = new EventSource(dbUrl(""));
     es.addEventListener("put",   e=> applyEvent(JSON.parse(e.data)));
     es.addEventListener("patch", e=> applyEvent(JSON.parse(e.data), true));
-    es.onopen  = ()=>{ fails=0; syncProblem=null; setStatus("synced","Synced"); };
-    es.onerror = ()=>{
-      fails++;
-      if(fails<2){ setStatus("warn","Reconnecting…"); return; }
-      // Two failures in a row is not a blip. Some networks block streaming
-      // connections outright, so fall back to polling if plain REST still works.
-      if(es){ es.close(); es=null; }
-      setStatus("warn","Checking connection…");
-      testConnection().then(res=>{
-        if(res.ok){ goPolling(); }
-        else{ syncProblem=res.msg; setStatus("warn","Sync blocked — tap"); setupStatus(); }
-      });
+    es.onopen = ()=>{
+      liveOK=true; syncProblem=null;
+      if(pollTimer){ clearInterval(pollTimer); pollTimer=null; }   // live now, polling redundant
+      if(watchdog){ clearTimeout(watchdog); watchdog=null; }
+      setStatus("synced","Synced");
     };
-  }catch(err){ goPolling(); }
+    // Deliberately quiet on error: polling is still running, so a failed stream is
+    // not a failed sync. The watchdog decides when to stop trying.
+    es.onerror = ()=>{};
+    // A blocked stream often connects and then hangs, firing one error and retrying
+    // forever, so waiting for repeated errors would wait forever. Time it out instead.
+    watchdog=setTimeout(()=>{
+      if(liveOK) return;
+      if(es){ es.close(); es=null; }
+      if(!pollTimer){ cloudLoad(); pollTimer=setInterval(cloudLoad, 5000); }
+    }, 8000);
+  }catch(e){ /* polling continues */ }
 }
-/* Live stream unavailable but REST works — refresh on a timer instead. */
-function goPolling(){
-  if(pollTimer) clearInterval(pollTimer);
-  pollTimer=setInterval(cloudLoad, 5000);
-  syncProblem=null;
-  setStatus("synced","Synced · polling");
-}
+
 function applyEvent(msg, isPatch){
   if(!msg) return;
   const path = msg.path, data = msg.data;
@@ -488,7 +533,7 @@ function applyEvent(msg, isPatch){
   }
   saveLocal(); renderAll();
 }
-let pollTimer=null;
+let pollTimer=null, watchdog=null, liveOK=false;
 
 function setStatus(cls, text){ connCls=cls; connText=text; paintPill(); }
 function paintPill(){
@@ -542,8 +587,10 @@ async function runTest(){
   const el=document.getElementById("setupStatus");
   el.innerHTML="Testing the connection…";
   const res=await testConnection();
-  el.innerHTML = res.ok ? '<b class="good">'+esc(res.msg)+'</b>'
-                        : '<b class="bad">'+esc(res.msg)+'</b>';
+  const tried = FIREBASE_DB
+    ? '<br><span class="tried">Tried: '+esc(dbUrl("_probe"))+'</span>' : '';
+  el.innerHTML = (res.ok ? '<b class="good">'+esc(res.msg)+'</b>'
+                         : '<b class="bad">'+esc(res.msg)+'</b>') + tried;
   if(res.ok && syncProblem){ syncProblem=null; startStream(); }
 }
 function openSetup(){
@@ -560,7 +607,7 @@ function toggleSetup(){
   else openSetup();
 }
 function saveSetup(){
-  const url = document.getElementById("dbInput").value.trim().replace(/\/+$/,"");
+  const url = normalizeDbUrl(document.getElementById("dbInput").value);
   const bd  = (document.getElementById("boardInput").value.trim() || "vikings-2026").replace(/[^A-Za-z0-9_-]/g,"-");
   FIREBASE_DB = url;
   if(url) LS.set("viktix_db", url); else LS.del("viktix_db");
