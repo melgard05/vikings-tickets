@@ -76,6 +76,11 @@
   .seats{display:flex;gap:6px;align-items:center;}
   select{border:1px solid var(--line);border-radius:7px;padding:6px;font-size:.82rem;font-family:inherit;
     background:#fff;color:var(--ink);max-width:118px;}
+  input.seat{border:1px solid var(--line);border-radius:7px;padding:6px 8px;font-size:.82rem;
+    font-family:inherit;background:#fff;color:var(--ink);width:118px;max-width:100%;font-weight:600;}
+  input.seat::placeholder{color:#a9a2b8;font-weight:400;font-style:italic;}
+  input.seat:focus{outline:2px solid var(--gold);outline-offset:1px;border-color:var(--purple);}
+  input.seat.open-seat{background:var(--open);}
   select.open-seat{background:var(--open);color:var(--muted);}
   select:focus{outline:2px solid var(--gold);outline-offset:1px;}
   .pips{display:inline-flex;gap:3px;margin-right:8px;}
@@ -110,7 +115,7 @@
 
   @media(max-width:760px){
     .grid2{grid-template-columns:1fr;}
-    .seats{flex-wrap:wrap;} select{max-width:46%;}
+    .seats{flex-wrap:wrap;} select{max-width:46%;} input.seat{width:100%;}
     thead{display:none;}
     tbody td{display:block;border:none;padding:4px 0;}
     tbody tr{display:block;border-bottom:1px solid var(--line);padding:12px 0;}
@@ -119,7 +124,7 @@
     header.hero{background:var(--purple)!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
     .toolbar,.add-form,.chip button,.fillall,.setup,.pill{display:none!important;}
     .panel{break-inside:avoid;}
-    select{border:none;-webkit-appearance:none;appearance:none;}
+    select,input.seat{border:none;-webkit-appearance:none;appearance:none;padding-left:0;background:none;}
   }
 </style>
 </head>
@@ -191,6 +196,7 @@
       </thead>
       <tbody id="gamesBody"></tbody>
     </table>
+    <datalist id="rosterList"></datalist>
   </div>
 
   <!-- SUMMARY -->
@@ -265,7 +271,7 @@ let es = null;
 
 function blankState(){
   const assign = {}; GAMES.forEach(g=> assign[g.id]=["","","",""]);
-  return { roster:["Kelly","Phil"], assign };
+  return { roster:["Kelly","Casey"], assign };
 }
 function loadLocal(){
   let st=null;
@@ -469,9 +475,11 @@ function renderGames(){
     const pips=seats.map(s=>`<span class="pip ${s?'filled':''}"></span>`).join("");
     const status=open===0?`<span class="status full">FULL</span>`:`<span class="status has-open">${open} open</span>`;
     const seatCells=seats.map((val,si)=>{
-      const opts=['<option value="">— open —</option>']
-        .concat(state.roster.map(n=>`<option value="${esc(n)}" ${n===val?'selected':''}>${esc(n)}</option>`)).join("");
-      return `<td><select class="${val?'':'open-seat'}" onchange="setSeat('${g.id}',${si},this.value)">${opts}</select></td>`;
+      return `<td><input type="text" class="seat ${val?'':'open-seat'}" list="rosterList"
+        data-key="${g.id}:${si}" value="${esc(val)}" placeholder="— open —" maxlength="22"
+        autocomplete="off" autocapitalize="words" spellcheck="false"
+        onchange="setSeat('${g.id}',${si},this.value)"
+        onkeydown="if(event.key==='Enter')this.blur()"></td>`;
     }).join("");
     const fillOpts=['<option value="">Assign all 4 to…</option>']
       .concat(state.roster.map(n=>`<option value="${esc(n)}">${esc(n)}</option>`))
@@ -489,15 +497,39 @@ function renderGames(){
     </tr>`;
   }).join("");
 }
+/* Typed names are accepted as-is. If the name matches someone already on the roster
+   (ignoring case) we reuse that spelling so counts don't split across variants;
+   otherwise the new name joins the roster automatically. */
+function normalizeName(v){
+  const s=String(v==null?"":v).trim().replace(/\s+/g," ").slice(0,22);
+  if(!s) return "";
+  const hit=state.roster.find(n=>n.toLowerCase()===s.toLowerCase());
+  return hit || s;
+}
+function ensureOnRoster(name){
+  if(!name) return false;
+  if(state.roster.some(n=>n.toLowerCase()===name.toLowerCase())) return false;
+  state.roster.push(name);
+  return true;
+}
 function setSeat(gid,si,val){
-  state.assign[gid][si]=val;
-  saveLocal(); cloudPut("assign/"+gid, state.assign[gid]); renderAll();
+  const name=normalizeName(val);
+  state.assign[gid][si]=name;
+  const grew=ensureOnRoster(name);
+  saveLocal();
+  cloudPut("assign/"+gid, state.assign[gid]);
+  if(grew) cloudPut("roster", state.roster);
+  renderAll();
 }
 function fillAll(gid,val){
   if(val==="") return;
-  const v=(val==="__clear__")?"":val;
-  state.assign[gid]=[v,v,v,v];
-  saveLocal(); cloudPut("assign/"+gid, state.assign[gid]); renderAll();
+  const name=(val==="__clear__")?"":normalizeName(val);
+  state.assign[gid]=[name,name,name,name];
+  const grew=ensureOnRoster(name);
+  saveLocal();
+  cloudPut("assign/"+gid, state.assign[gid]);
+  if(grew) cloudPut("roster", state.roster);
+  renderAll();
 }
 
 /* ---- Summaries ---- */
@@ -550,7 +582,23 @@ function toast(msg){
   const t=document.getElementById("toast"); t.textContent=msg; t.classList.add("show");
   clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove("show"),2600);
 }
-function renderAll(){ renderRoster(); renderGames(); renderWho(); renderOpen(); }
+function renderDatalist(){
+  const dl=document.getElementById("rosterList");
+  if(dl) dl.innerHTML=state.roster.map(n=>`<option value="${esc(n)}"></option>`).join("");
+}
+/* Re-rendering the table would otherwise yank the cursor out of a seat box
+   mid-edit (including when a teammate's change arrives over sync). */
+function keepFocus(fn){
+  const a=document.activeElement;
+  const key=(a && a.dataset) ? a.dataset.key : null;
+  const s=key?a.selectionStart:null, e=key?a.selectionEnd:null;
+  fn();
+  if(key){
+    const el=document.querySelector('[data-key="'+key+'"]');
+    if(el){ el.focus(); try{ el.setSelectionRange(s,e); }catch(err){} }
+  }
+}
+function renderAll(){ renderRoster(); renderDatalist(); keepFocus(renderGames); renderWho(); renderOpen(); }
 
 window.addEventListener("focus", ()=>{ if(FIREBASE_DB && !es) cloudLoad(); });
 
