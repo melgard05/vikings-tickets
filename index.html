@@ -190,6 +190,7 @@
     <input type="text" id="boardInput" placeholder="vikings-2026">
     <div style="display:flex;gap:10px;margin-bottom:12px;">
       <button class="btn btn-primary" onclick="saveSetup()">Save &amp; sync</button>
+      <button class="btn btn-ghost" onclick="runTest()">Test connection</button>
       <button class="btn btn-ghost" onclick="toggleSetup()">Close</button>
     </div>
     <div class="hint">
@@ -279,6 +280,7 @@ async function resolveBuild(){
 let serverBuild = null;
 let updateAvailable = false;
 let connCls = "local", connText = "Local only";
+let syncProblem = null;   // human-readable reason syncing is failing, if any
 
 /* Storage shim — opening this file straight from disk (file://) or having site data
    blocked makes localStorage throw on access. Falling back to memory keeps the app
@@ -397,18 +399,62 @@ function applyAssignMap(obj){
   GAMES.forEach(g=>{ if(obj[g.id]!==undefined) state.assign[g.id]=normalizeSeats(obj[g.id]); });
 }
 /* live updates: Firebase streams "put"/"patch" SSE events to EventSource */
+/* Reads and writes over plain REST — used to prove whether the database is reachable
+   when the live stream fails, so the status can name the real problem. */
+async function testConnection(){
+  if(!FIREBASE_DB) return {ok:false, msg:"No database URL set. Add it to config.js."};
+  let r, txt;
+  try{ r = await fetch(dbUrl("_probe")); txt = await r.text(); }
+  catch(e){ return {ok:false, msg:"Could not reach the database at all. Check the URL in config.js is exact, and that you're online."}; }
+  if(r.status===401 || r.status===403){
+    let m=txt; try{ m=JSON.parse(txt).error||txt; }catch(e){}
+    return {ok:false, msg:"Database rules are blocking this ("+m+"). In Firebase → Realtime Database → Rules, allow read and write on \"viktix\", then press Publish."};
+  }
+  if(r.status===404) return {ok:false, msg:"404 — that URL isn't a Realtime Database. Check for a typo, and that you copied the database URL rather than the project page."};
+  if(!r.ok) return {ok:false, msg:"HTTP "+r.status+" from the database."};
+  // read worked; confirm writes are allowed too
+  try{
+    const wr = await fetch(dbUrl("_probe"), {method:"PUT", body:JSON.stringify(Date.now())});
+    if(wr.status===401 || wr.status===403)
+      return {ok:false, msg:"Reading works but writing is denied by your database rules, so changes can't be shared. Set \".write\": true on \"viktix\" and Publish."};
+    if(!wr.ok) return {ok:false, msg:"Write failed with HTTP "+wr.status+"."};
+  }catch(e){ return {ok:false, msg:"Write attempt failed. Check the rules allow writing."}; }
+  return {ok:true, msg:"Connected — reads and writes both working."};
+}
+
 function startStream(){
   if(es){ es.close(); es=null; }
+  if(pollTimer){ clearInterval(pollTimer); pollTimer=null; }
+  syncProblem=null;
   if(!FIREBASE_DB){ setStatus("local","Local only"); return; }
   cloudLoad();
-  if(!window.EventSource){ setStatus("synced","Synced"); pollFallback(); return; }
+  if(!window.EventSource){ goPolling(); return; }
+  let fails=0;
   try{
     es = new EventSource(dbUrl(""));
     es.addEventListener("put",   e=> applyEvent(JSON.parse(e.data)));
     es.addEventListener("patch", e=> applyEvent(JSON.parse(e.data), true));
-    es.onopen  = ()=> setStatus("synced","Synced");
-    es.onerror = ()=> setStatus("warn","Reconnecting…");
-  }catch(err){ setStatus("synced","Synced"); pollFallback(); }
+    es.onopen  = ()=>{ fails=0; syncProblem=null; setStatus("synced","Synced"); };
+    es.onerror = ()=>{
+      fails++;
+      if(fails<2){ setStatus("warn","Reconnecting…"); return; }
+      // Two failures in a row is not a blip. Some networks block streaming
+      // connections outright, so fall back to polling if plain REST still works.
+      if(es){ es.close(); es=null; }
+      setStatus("warn","Checking connection…");
+      testConnection().then(res=>{
+        if(res.ok){ goPolling(); }
+        else{ syncProblem=res.msg; setStatus("warn","Sync blocked — tap"); setupStatus(); }
+      });
+    };
+  }catch(err){ goPolling(); }
+}
+/* Live stream unavailable but REST works — refresh on a timer instead. */
+function goPolling(){
+  if(pollTimer) clearInterval(pollTimer);
+  pollTimer=setInterval(cloudLoad, 5000);
+  syncProblem=null;
+  setStatus("synced","Synced · polling");
 }
 function applyEvent(msg, isPatch){
   if(!msg) return;
@@ -443,7 +489,6 @@ function applyEvent(msg, isPatch){
   saveLocal(); renderAll();
 }
 let pollTimer=null;
-function pollFallback(){ if(pollTimer) clearInterval(pollTimer); pollTimer=setInterval(cloudLoad, 5000); }
 
 function setStatus(cls, text){ connCls=cls; connText=text; paintPill(); }
 function paintPill(){
@@ -470,6 +515,7 @@ function onPillClick(){
     else location.reload();
     return;
   }
+  if(syncProblem){ openSetup(); return; }        // show what's actually wrong
   if(FIREBASE_DB){ cloudLoad(); toast("Refreshed"); return; }
   openSetup();   // nothing to sync with yet — show the person why
 }
@@ -478,6 +524,10 @@ function onPillClick(){
 function setupStatus(){
   const el=document.getElementById("setupStatus");
   if(!el) return;
+  if(syncProblem){
+    el.innerHTML='<b class="bad">Syncing is blocked.</b> '+esc(syncProblem);
+    return;
+  }
   if(!CFG){
     el.innerHTML='<b class="bad">config.js did not load.</b> Make sure config.js sits next to index.html in the repo.';
   }else if(DEFAULT_DB){
@@ -487,6 +537,14 @@ function setupStatus(){
   }else{
     el.innerHTML='<b class="bad">No database URL yet, so this board is local to this device.</b> Paste your Firebase URL into config.js (preferred), or enter it below to try it on this device.';
   }
+}
+async function runTest(){
+  const el=document.getElementById("setupStatus");
+  el.innerHTML="Testing the connection…";
+  const res=await testConnection();
+  el.innerHTML = res.ok ? '<b class="good">'+esc(res.msg)+'</b>'
+                        : '<b class="bad">'+esc(res.msg)+'</b>';
+  if(res.ok && syncProblem){ syncProblem=null; startStream(); }
 }
 function openSetup(){
   const p=document.getElementById("setupPanel");
