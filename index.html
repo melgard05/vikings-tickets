@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vikings Season Ticket Board — 2026 Home Games</title>
+<style>
+  :root{
+    --purple:#4F2683; --purple-deep:#3a1c63; --gold:#FFC62F;
+    --ink:#1a1626; --muted:#6b6577; --line:#e4e0ec; --bg:#f6f4fa; --card:#ffffff;
+    --open:#e9e4f3; --full:#1f8a4c; --warn:#c0392b;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased;}
+  header.hero{background:linear-gradient(135deg,var(--purple) 0%,var(--purple-deep) 100%);color:#fff;padding:22px 26px 20px;}
+  .hero-top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;}
+  .hero h1{margin:0;font-size:1.55rem;font-weight:800;letter-spacing:-.5px;}
+  .hero h1 span{color:var(--gold);}
+  .hero p{margin:4px 0 0;color:#d8cfe9;font-size:.86rem;}
+  .pill{display:inline-flex;align-items:center;gap:6px;font-size:.72rem;font-weight:800;
+    padding:5px 11px;border-radius:999px;background:rgba(255,255,255,.14);color:#fff;white-space:nowrap;}
+  .pill .dot{width:8px;height:8px;border-radius:50%;background:#9c93b5;}
+  .pill.synced .dot{background:#57e08a;} .pill.local .dot{background:#c9c2d8;}
+  .pill.warn .dot{background:var(--gold);}
+  .wrap{max-width:1040px;margin:0 auto;padding:20px 18px 70px;}
+
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:18px;}
+  .panel h2{margin:0 0 12px;font-size:.78rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--purple);font-weight:800;}
+
+  .roster-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
+  .chip{display:inline-flex;align-items:center;gap:6px;background:var(--open);color:var(--purple-deep);
+    border-radius:999px;padding:5px 6px 5px 12px;font-weight:600;font-size:.85rem;}
+  .chip button{border:none;background:rgba(79,38,131,.18);color:var(--purple-deep);
+    width:20px;height:20px;border-radius:50%;cursor:pointer;font-size:.8rem;line-height:1;}
+  .chip button:hover{background:var(--warn);color:#fff;}
+  .add-form{display:flex;gap:8px;margin-top:12px;}
+  input[type=text]{border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:.9rem;
+    font-family:inherit;color:var(--ink);min-width:0;}
+  input[type=text]:focus{outline:2px solid var(--gold);outline-offset:1px;}
+  .btn{border:none;border-radius:8px;padding:8px 14px;font-weight:700;font-size:.85rem;cursor:pointer;font-family:inherit;}
+  .btn-primary{background:var(--purple);color:#fff;} .btn-primary:hover{background:var(--purple-deep);}
+  .btn-gold{background:var(--gold);color:var(--purple-deep);} .btn-gold:hover{filter:brightness(.95);}
+  .btn-ghost{background:transparent;color:var(--purple);border:1px solid var(--line);} .btn-ghost:hover{border-color:var(--purple);}
+
+  table{width:100%;border-collapse:collapse;}
+  thead th{text-align:left;font-size:.68rem;text-transform:uppercase;letter-spacing:1px;color:var(--muted);
+    font-weight:700;padding:0 8px 8px;border-bottom:2px solid var(--line);}
+  tbody td{padding:11px 8px;border-bottom:1px solid var(--line);vertical-align:middle;font-size:.9rem;}
+  tbody tr:hover{background:#faf8fd;}
+  .wk{font-weight:800;color:var(--purple);font-size:.8rem;}
+  .matchup{font-weight:700;}
+  .meta{color:var(--muted);font-size:.78rem;margin-top:2px;}
+  .tag{display:inline-block;font-size:.62rem;font-weight:800;letter-spacing:.5px;padding:2px 6px;border-radius:4px;
+    background:var(--gold);color:var(--purple-deep);margin-left:6px;vertical-align:middle;}
+  .tag-pre{background:var(--purple);color:#fff;}
+  select.fillall{margin-top:7px;max-width:160px;font-size:.74rem;font-weight:700;color:var(--purple);
+    border:1px solid #d6cfe6;border-radius:7px;padding:6px;background:#fbfaff;cursor:pointer;font-family:inherit;}
+  .pre-row{background:#faf7ff;} .pre-row:hover{background:#f4eefe;}
+
+  .seats{display:flex;gap:6px;align-items:center;}
+  select{border:1px solid var(--line);border-radius:7px;padding:6px;font-size:.82rem;font-family:inherit;
+    background:#fff;color:var(--ink);max-width:118px;}
+  select.open-seat{background:var(--open);color:var(--muted);}
+  select:focus{outline:2px solid var(--gold);outline-offset:1px;}
+  .pips{display:inline-flex;gap:3px;margin-right:8px;}
+  .pip{width:13px;height:13px;border-radius:3px;background:var(--open);border:1px solid #d6cfe6;}
+  .pip.filled{background:var(--purple);border-color:var(--purple);}
+  .status{font-size:.72rem;font-weight:800;white-space:nowrap;}
+  .status.full{color:var(--full);} .status.has-open{color:var(--warn);}
+
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px;}
+  .who-row{display:flex;justify-content:space-between;align-items:baseline;padding:8px 0;border-bottom:1px solid var(--line);}
+  .who-row:last-child{border-bottom:none;}
+  .who-name{font-weight:700;} .who-count{color:var(--purple);font-weight:800;}
+  .who-weeks{color:var(--muted);font-size:.76rem;display:block;margin-top:2px;}
+  .open-line{padding:8px 0;border-bottom:1px solid var(--line);font-size:.86rem;}
+  .open-line:last-child{border-bottom:none;} .open-line b{color:var(--warn);}
+  .empty-note{color:var(--muted);font-size:.85rem;font-style:italic;}
+
+  .toolbar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px;align-items:center;}
+
+  /* setup panel */
+  .setup{display:none;}
+  .setup.show{display:block;}
+  .setup label{display:block;font-size:.72rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin:2px 0 6px;}
+  .setup input{width:100%;margin-bottom:12px;}
+  .setup .hint{font-size:.8rem;color:var(--muted);line-height:1.5;}
+  .setup code{background:var(--open);padding:1px 5px;border-radius:4px;font-size:.78rem;}
+
+  #toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);opacity:0;
+    background:var(--ink);color:#fff;padding:11px 18px;border-radius:10px;font-size:.85rem;font-weight:600;
+    pointer-events:none;transition:.25s;z-index:50;max-width:90vw;text-align:center;}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+
+  @media(max-width:760px){
+    .grid2{grid-template-columns:1fr;}
+    .seats{flex-wrap:wrap;} select{max-width:46%;}
+    thead{display:none;}
+    tbody td{display:block;border:none;padding:4px 0;}
+    tbody tr{display:block;border-bottom:1px solid var(--line);padding:12px 0;}
+  }
+  @media print{
+    header.hero{background:var(--purple)!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+    .toolbar,.add-form,.chip button,.fillall,.setup,.pill{display:none!important;}
+    .panel{break-inside:avoid;}
+    select{border:none;-webkit-appearance:none;appearance:none;}
+  }
+</style>
+</head>
+<body>
+<header class="hero">
+  <div class="hero-top">
+    <div>
+      <h1>Vikings Season Ticket Board <span>·</span> 2026 Home Games</h1>
+      <p>4 seats · 1 preseason + 9 regular-season home games at U.S. Bank Stadium</p>
+    </div>
+    <span class="pill local" id="syncPill"><span class="dot"></span><span id="syncText">Local only</span></span>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="toolbar">
+    <button class="btn btn-gold" onclick="shareLink()">Share link</button>
+    <button class="btn btn-ghost" onclick="toggleSetup()">Set up sync</button>
+    <button class="btn btn-ghost" onclick="exportCSV()">Export CSV</button>
+    <button class="btn btn-ghost" onclick="window.print()">Print / PDF</button>
+    <button class="btn btn-ghost" onclick="resetAll()">Clear assignments</button>
+  </div>
+
+  <!-- SETUP -->
+  <div class="panel setup" id="setupPanel">
+    <h2>Sync setup</h2>
+    <label for="dbInput">Firebase Realtime Database URL</label>
+    <input type="text" id="dbInput" placeholder="https://your-project-default-rtdb.firebaseio.com">
+    <label for="boardInput">Board name (shared by everyone on the link)</label>
+    <input type="text" id="boardInput" placeholder="vikings-2026">
+    <div style="display:flex;gap:10px;margin-bottom:12px;">
+      <button class="btn btn-primary" onclick="saveSetup()">Save &amp; sync</button>
+      <button class="btn btn-ghost" onclick="toggleSetup()">Close</button>
+    </div>
+    <div class="hint">
+      One-time setup so a single link stays in sync for everyone:
+      create a free Firebase Realtime Database, paste its URL above (or hard-code it in the file's
+      <code>DEFAULT_DB</code> line before deploying so co-owners never see this panel), then set the
+      database rules to allow read/write. Everyone who opens your <b>Share link</b> then reads and writes
+      the same board live. Without this, the board still works but stays private to each device.
+    </div>
+  </div>
+
+  <!-- ROSTER -->
+  <div class="panel">
+    <h2>Seat holders &amp; guests</h2>
+    <div class="roster-row" id="rosterRow"></div>
+    <div class="add-form">
+      <input type="text" id="newName" placeholder="Add a name (you, family, guests…)" maxlength="22"
+             onkeydown="if(event.key==='Enter')addPerson()">
+      <button class="btn btn-primary" onclick="addPerson()">Add</button>
+    </div>
+  </div>
+
+  <!-- GAMES -->
+  <div class="panel">
+    <h2>Home game assignments</h2>
+    <table>
+      <thead>
+        <tr>
+          <th style="width:130px">Game</th>
+          <th>Seat 1</th><th>Seat 2</th><th>Seat 3</th><th>Seat 4</th>
+          <th style="width:120px">Status</th>
+        </tr>
+      </thead>
+      <tbody id="gamesBody"></tbody>
+    </table>
+  </div>
+
+  <!-- SUMMARY -->
+  <div class="grid2">
+    <div class="panel"><h2>Who's going</h2><div id="whoGoing"></div></div>
+    <div class="panel"><h2>Open seats</h2><div id="openSeats"></div></div>
+  </div>
+
+</div>
+<div id="toast"></div>
+
+<script>
+/* =========================================================
+   CONFIG — for a permanently-shared app, paste your Firebase
+   Realtime Database URL here and deploy. Then every visitor
+   is synced automatically without touching the setup panel.
+   ========================================================= */
+const DEFAULT_DB = "";              // e.g. "https://your-project-default-rtdb.firebaseio.com"
+const AUTH = "";                    // optional RTDB auth token / secret; leave "" if rules are open
+
+/* runtime DB url: hard-coded default wins; else a value saved via the setup panel */
+let FIREBASE_DB = DEFAULT_DB || localStorage.getItem("viktix_db") || "";
+
+/* board id comes from the ?board= link so a shared URL points everyone at one board */
+const qp = new URLSearchParams(location.search);
+let boardId = (qp.get("board") || localStorage.getItem("viktix_board") || "vikings-2026")
+                .replace(/[^A-Za-z0-9_-]/g,"-");
+qp.set("board", boardId);
+history.replaceState(null,"",location.pathname+"?"+qp.toString());
+localStorage.setItem("viktix_board", boardId);
+
+/* ---- 2026 Minnesota Vikings HOME schedule (U.S. Bank Stadium) ---- */
+const GAMES = [
+  {id:"pre2",wk:"Preseason", short:"PRE",opp:"Baltimore Ravens",   date:"Sat, Aug 22, 2026", time:"12:00 PM CT",tag:"PRE", pre:true},
+  {id:"w1",  wk:"Week 1",  short:"W1", opp:"Green Bay Packers",    date:"Sun, Sep 13, 2026", time:"3:25 PM CT", tag:""},
+  {id:"w4",  wk:"Week 4",  short:"W4", opp:"Miami Dolphins",       date:"Sun, Oct 4, 2026",  time:"3:05 PM CT", tag:""},
+  {id:"w7",  wk:"Week 7",  short:"W7", opp:"Indianapolis Colts",   date:"Sun, Oct 25, 2026", time:"12:00 PM CT",tag:""},
+  {id:"w9",  wk:"Week 9",  short:"W9", opp:"Buffalo Bills",        date:"Mon, Nov 9, 2026",  time:"7:15 PM CT", tag:"MNF"},
+  {id:"w12", wk:"Week 12", short:"W12",opp:"Atlanta Falcons",      date:"Sun, Nov 29, 2026", time:"3:25 PM CT", tag:""},
+  {id:"w13", wk:"Week 13", short:"W13",opp:"Carolina Panthers",    date:"Sun, Dec 6, 2026",  time:"3:25 PM CT", tag:""},
+  {id:"w15", wk:"Week 15", short:"W15",opp:"Detroit Lions",        date:"Sun, Dec 20, 2026", time:"7:20 PM CT", tag:"SNF"},
+  {id:"w16", wk:"Week 16", short:"W16",opp:"Washington Commanders",date:"Date TBD (Dec)",    time:"TBD",        tag:""},
+  {id:"w18", wk:"Week 18", short:"W18",opp:"Chicago Bears",        date:"Date TBD (Jan '27)",time:"TBD",        tag:""}
+];
+const SEATS = 4;
+const cacheKey = () => "viktix_2026_" + boardId;
+
+/* ---- State ---- */
+let state = loadLocal();
+let es = null;
+
+function blankState(){
+  const assign = {}; GAMES.forEach(g=> assign[g.id]=["","","",""]);
+  return { roster:["Kelly","Phil"], assign };
+}
+function loadLocal(){
+  let st=null;
+  try{ const raw=localStorage.getItem(cacheKey()); if(raw) st=JSON.parse(raw); }catch(e){}
+  if(!st) st=blankState();
+  if(!st.assign) st.assign={};
+  GAMES.forEach(g=>{ st.assign[g.id]=normalizeSeats(st.assign[g.id]); });
+  if(!Array.isArray(st.roster)) st.roster=[];
+  return st;
+}
+function saveLocal(){ try{ localStorage.setItem(cacheKey(), JSON.stringify(state)); }catch(e){} }
+
+function normalizeSeats(v){
+  let arr = Array.isArray(v) ? v.slice() : (v && typeof v==="object" ? Object.values(v) : []);
+  arr = arr.map(x=> x==null ? "" : String(x));
+  while(arr.length<SEATS) arr.push("");
+  return arr.slice(0,SEATS);
+}
+
+/* =========================================================
+   SYNC LAYER — Firebase RTDB over REST + live SSE stream
+   ========================================================= */
+function dbUrl(sub){
+  const base = FIREBASE_DB.replace(/\/+$/,"");
+  const path = "/viktix/" + boardId + (sub ? "/"+sub : "");
+  return base + path + ".json" + (AUTH ? "?auth="+encodeURIComponent(AUTH) : "");
+}
+function cloudPut(sub, value){
+  if(!FIREBASE_DB) return;
+  fetch(dbUrl(sub), {method:"PUT", body:JSON.stringify(value)})
+    .then(r=>{ if(!r.ok) setStatus("warn","Sync error"); })
+    .catch(()=> setStatus("warn","Offline"));
+}
+async function cloudLoad(){
+  if(!FIREBASE_DB) return;
+  try{
+    const r = await fetch(dbUrl(""));
+    const data = await r.json();
+    if(data){
+      if(Array.isArray(data.roster)) state.roster = data.roster;
+      if(data.assign) applyAssignMap(data.assign);
+      saveLocal(); renderAll();
+    }
+  }catch(e){ setStatus("warn","Offline"); }
+}
+function applyAssignMap(obj){
+  GAMES.forEach(g=>{ if(obj[g.id]!==undefined) state.assign[g.id]=normalizeSeats(obj[g.id]); });
+}
+/* live updates: Firebase streams "put"/"patch" SSE events to EventSource */
+function startStream(){
+  if(es){ es.close(); es=null; }
+  if(!FIREBASE_DB){ setStatus("local","Local only"); return; }
+  cloudLoad();
+  if(!window.EventSource){ setStatus("synced","Synced"); pollFallback(); return; }
+  try{
+    es = new EventSource(dbUrl(""));
+    es.addEventListener("put",   e=> applyEvent(JSON.parse(e.data)));
+    es.addEventListener("patch", e=> applyEvent(JSON.parse(e.data), true));
+    es.onopen  = ()=> setStatus("synced","Synced");
+    es.onerror = ()=> setStatus("warn","Reconnecting…");
+  }catch(err){ setStatus("synced","Synced"); pollFallback(); }
+}
+function applyEvent(msg, isPatch){
+  if(!msg) return;
+  const path = msg.path, data = msg.data;
+  if(isPatch && data && typeof data==="object"){
+    Object.keys(data).forEach(k=>{
+      const p = path==="/" ? "/"+k : path+"/"+k;
+      applyEvent({path:p, data:data[k]});
+    });
+    return;
+  }
+  if(path==="/"){
+    if(data){
+      state.roster = Array.isArray(data.roster) ? data.roster : state.roster;
+      if(data.assign) applyAssignMap(data.assign);
+    }
+  } else if(path==="/roster"){
+    state.roster = Array.isArray(data) ? data : (data ? Object.values(data) : []);
+  } else if(path==="/assign"){
+    applyAssignMap(data || {});
+  } else if(path.indexOf("/assign/")===0){
+    const gid = path.split("/")[2];
+    if(gid) state.assign[gid] = normalizeSeats(data);
+  } else if(path.indexOf("/roster")===0){
+    state.roster = Array.isArray(data) ? data : (data ? Object.values(data) : []);
+  }
+  saveLocal(); renderAll();
+}
+let pollTimer=null;
+function pollFallback(){ if(pollTimer) clearInterval(pollTimer); pollTimer=setInterval(cloudLoad, 5000); }
+
+function setStatus(cls, text){
+  const pill=document.getElementById("syncPill");
+  pill.className = "pill " + cls;
+  document.getElementById("syncText").textContent = text;
+}
+
+/* ---- Setup panel ---- */
+function toggleSetup(){
+  const p=document.getElementById("setupPanel");
+  document.getElementById("dbInput").value = FIREBASE_DB;
+  document.getElementById("boardInput").value = boardId;
+  p.classList.toggle("show");
+}
+function saveSetup(){
+  const url = document.getElementById("dbInput").value.trim().replace(/\/+$/,"");
+  const bd  = (document.getElementById("boardInput").value.trim() || "vikings-2026").replace(/[^A-Za-z0-9_-]/g,"-");
+  FIREBASE_DB = url;
+  if(url) localStorage.setItem("viktix_db", url); else localStorage.removeItem("viktix_db");
+  if(bd!==boardId){
+    boardId=bd; localStorage.setItem("viktix_board", boardId);
+    const q=new URLSearchParams(location.search); q.set("board",boardId);
+    history.replaceState(null,"",location.pathname+"?"+q.toString());
+    state=loadLocal();
+  }
+  toggleSetup();
+  startStream(); renderAll();
+  toast(url ? "Sync on — share your link" : "Sync off — running local only");
+}
+
+/* ---- Share ---- */
+function shareLink(){
+  const url = location.href;
+  const done = ()=> toast(FIREBASE_DB ? "Link copied — anyone who opens it edits this board"
+                                      : "Link copied · turn on Set up sync so others see changes");
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(url).then(done).catch(()=>prompt("Copy this link:", url));
+  } else { prompt("Copy this link:", url); }
+}
+
+/* ---- Roster ---- */
+function renderRoster(){
+  const row=document.getElementById("rosterRow");
+  if(state.roster.length===0){
+    row.innerHTML='<span class="empty-note">No names yet — add the people who might use these seats below.</span>';
+    return;
+  }
+  row.innerHTML=state.roster.map((n,i)=>
+    `<span class="chip">${esc(n)}<button title="Remove" onclick="removePerson(${i})">×</button></span>`).join("");
+}
+function addPerson(){
+  const inp=document.getElementById("newName"); const name=inp.value.trim();
+  if(!name) return;
+  if(!state.roster.includes(name)) state.roster.push(name);
+  inp.value="";
+  saveLocal(); cloudPut("roster", state.roster); renderAll();
+}
+function removePerson(i){
+  const name=state.roster[i]; state.roster.splice(i,1);
+  GAMES.forEach(g=>{ state.assign[g.id]=state.assign[g.id].map(v=> v===name?"":v); });
+  saveLocal(); cloudPut("roster", state.roster); cloudPut("assign", state.assign); renderAll();
+}
+
+/* ---- Games ---- */
+function renderGames(){
+  const body=document.getElementById("gamesBody");
+  body.innerHTML=GAMES.map(g=>{
+    const seats=state.assign[g.id];
+    const filled=seats.filter(Boolean).length, open=SEATS-filled;
+    const pips=seats.map(s=>`<span class="pip ${s?'filled':''}"></span>`).join("");
+    const status=open===0?`<span class="status full">FULL</span>`:`<span class="status has-open">${open} open</span>`;
+    const seatCells=seats.map((val,si)=>{
+      const opts=['<option value="">— open —</option>']
+        .concat(state.roster.map(n=>`<option value="${esc(n)}" ${n===val?'selected':''}>${esc(n)}</option>`)).join("");
+      return `<td><select class="${val?'':'open-seat'}" onchange="setSeat('${g.id}',${si},this.value)">${opts}</select></td>`;
+    }).join("");
+    const fillOpts=['<option value="">Assign all 4 to…</option>']
+      .concat(state.roster.map(n=>`<option value="${esc(n)}">${esc(n)}</option>`))
+      .concat(['<option value="__clear__">— all open —</option>']).join("");
+    const tag=g.tag?`<span class="tag ${g.pre?'tag-pre':''}">${g.tag}</span>`:"";
+    return `<tr class="${g.pre?'pre-row':''}">
+      <td>
+        <div class="wk">${g.wk}${tag}</div>
+        <div class="matchup">vs ${esc(g.opp)}</div>
+        <div class="meta">${g.date} · ${g.time}</div>
+        <select class="fillall" onchange="fillAll('${g.id}',this.value)">${fillOpts}</select>
+      </td>
+      ${seatCells}
+      <td><span class="pips">${pips}</span>${status}</td>
+    </tr>`;
+  }).join("");
+}
+function setSeat(gid,si,val){
+  state.assign[gid][si]=val;
+  saveLocal(); cloudPut("assign/"+gid, state.assign[gid]); renderAll();
+}
+function fillAll(gid,val){
+  if(val==="") return;
+  const v=(val==="__clear__")?"":val;
+  state.assign[gid]=[v,v,v,v];
+  saveLocal(); cloudPut("assign/"+gid, state.assign[gid]); renderAll();
+}
+
+/* ---- Summaries ---- */
+function renderWho(){
+  const el=document.getElementById("whoGoing");
+  if(state.roster.length===0){ el.innerHTML='<span class="empty-note">Add seat holders to see counts.</span>'; return; }
+  el.innerHTML=state.roster.map(name=>{
+    const weeks=GAMES.filter(g=> state.assign[g.id].includes(name)).map(g=>g.short);
+    return `<div class="who-row">
+      <div><span class="who-name">${esc(name)}</span>
+        <span class="who-weeks">${weeks.length? weeks.join(" · ") : "no games yet"}</span></div>
+      <span class="who-count">${weeks.length}</span></div>`;
+  }).join("");
+}
+function renderOpen(){
+  const el=document.getElementById("openSeats");
+  const lines=GAMES.map(g=>{
+    const open=SEATS-state.assign[g.id].filter(Boolean).length;
+    if(open===0) return "";
+    return `<div class="open-line"><b>${open} seat${open>1?'s':''}</b> · ${g.wk} vs ${esc(g.opp)}
+      <span class="who-weeks" style="display:inline">(${g.date})</span></div>`;
+  }).filter(Boolean).join("");
+  el.innerHTML=lines || '<span class="empty-note">Every seat is assigned for all home games. 🟪</span>';
+}
+
+/* ---- CSV ---- */
+function exportCSV(){
+  const head=["Game","Opponent","Date","Time","Seat 1","Seat 2","Seat 3","Seat 4","Open Seats"];
+  const rows=GAMES.map(g=>{
+    const s=state.assign[g.id]; const open=SEATS-s.filter(Boolean).length;
+    return [g.wk,"vs "+g.opp,g.date,g.time,s[0],s[1],s[2],s[3],open].map(cell).join(",");
+  });
+  const csv=head.map(cell).join(",")+"\n"+rows.join("\n");
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
+  a.download="vikings-2026-tickets.csv"; a.click();
+}
+function cell(v){ v=(v==null?"":String(v)); return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; }
+
+function resetAll(){
+  if(!confirm("Clear all seat assignments? Seat-holder names stay.")) return;
+  GAMES.forEach(g=> state.assign[g.id]=["","","",""]);
+  saveLocal(); cloudPut("assign", state.assign); renderAll();
+}
+
+/* ---- utils ---- */
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+let toastT=null;
+function toast(msg){
+  const t=document.getElementById("toast"); t.textContent=msg; t.classList.add("show");
+  clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove("show"),2600);
+}
+function renderAll(){ renderRoster(); renderGames(); renderWho(); renderOpen(); }
+
+window.addEventListener("focus", ()=>{ if(FIREBASE_DB && !es) cloudLoad(); });
+
+renderAll();
+startStream();
+</script>
+</body>
+</html>
