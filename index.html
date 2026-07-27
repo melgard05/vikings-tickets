@@ -211,9 +211,23 @@
 const DEFAULT_DB = "";              // e.g. "https://your-project-default-rtdb.firebaseio.com"
 const AUTH = "";                    // optional RTDB auth token / secret; leave "" if rules are open
 
-/* BUILD — bump this by 1 every time you deploy a new version of index.html.
-   Clients still running an older build see a pulsing green "Update ready" light. */
-const BUILD = 2;
+/* BUILD — derived automatically from this file's Last-Modified timestamp, so there is
+   nothing to bump by hand. Deploying a new index.html changes the timestamp, which
+   changes the build, which lights the green "Update ready" pill on other devices.
+   BUILD is epoch seconds (monotonic, comparable); BUILD_LABEL is what's displayed. */
+const BUILD = (function(){
+  const t = Date.parse(document.lastModified);
+  if(!isFinite(t)) return null;
+  // No Last-Modified header → the browser substitutes "now"; that value is useless
+  // as a build id and would flap on every load, so treat it as unknown instead.
+  if(Math.abs(Date.now() - t) < 120000) return null;
+  return Math.floor(t/1000);
+})();
+const BUILD_LABEL = (function(){
+  if(BUILD==null) return "dev";
+  const d = new Date(BUILD*1000), p = n=>String(n).padStart(2,"0");
+  return p(d.getMonth()+1)+p(d.getDate())+"."+p(d.getHours())+p(d.getMinutes());
+})();
 let serverBuild = null;             // highest build any client has advertised
 let updateAvailable = false;
 let connCls = "local", connText = "Local only";
@@ -359,23 +373,24 @@ function paintPill(){
   if(updateAvailable){
     pill.className="pill update";
     txt.textContent="Update ready — tap to refresh";
-    bld.textContent="Build "+BUILD+" → "+serverBuild;
+    bld.textContent="Build "+BUILD_LABEL;
   }else{
     pill.className="pill "+connCls;
     txt.textContent=connText;
-    bld.textContent="Build "+BUILD;
+    bld.textContent="Build "+BUILD_LABEL;
   }
 }
 /* build / update-available detection (shared via Firebase /_meta/build) */
+function markUpdate(){ updateAvailable=true; paintPill(); }
 function setServerBuild(b){
   b = Number(b);
   if(!isFinite(b)) return;
   serverBuild = (serverBuild==null) ? b : Math.max(serverBuild, b);
-  updateAvailable = serverBuild > BUILD;
+  if(BUILD!=null && serverBuild > BUILD) updateAvailable = true;
   paintPill();
 }
 function advertiseBuild(){
-  if(!FIREBASE_DB) return;
+  if(!FIREBASE_DB || BUILD==null) return;
   if(serverBuild==null || BUILD>serverBuild) cloudPut("_meta/build", BUILD);
 }
 let swWaiting = null;
@@ -577,15 +592,15 @@ if(!isStandalone && /iPad|iPhone|iPod/.test(navigator.userAgent)){
 }
 
 if("serviceWorker" in navigator && location.protocol.indexOf("http")===0){
-  navigator.serviceWorker.register("sw.js").then(reg=>{
+  navigator.serviceWorker.register("sw.js?v="+(BUILD==null?"dev":BUILD)).then(reg=>{
     // a waiting worker means a newer build is already downloaded
-    if(reg.waiting){ swWaiting = reg.waiting; setServerBuild(BUILD+1); }
+    if(reg.waiting){ swWaiting = reg.waiting; markUpdate(); }
     reg.addEventListener("updatefound", ()=>{
       const nw = reg.installing;
       if(!nw) return;
       nw.addEventListener("statechange", ()=>{
         if(nw.state==="installed" && navigator.serviceWorker.controller){
-          swWaiting = nw; setServerBuild(BUILD+1);   // lights up the green update pill
+          swWaiting = nw; markUpdate();             // lights up the green update pill
         }
       });
     });

@@ -1,15 +1,15 @@
 /* Vikings Season Ticket Board — service worker
-   BUMP THIS to the same number as BUILD in index.html on every deploy. */
-const BUILD = 2;
-const CACHE = "viktix-v" + BUILD;
+   No editing required. The version comes from the ?v= value that index.html
+   passes at registration, which is derived from index.html's Last-Modified time.
+   Deploy a new index.html and this worker versions itself automatically. */
+const VERSION = new URL(self.location.href).searchParams.get("v") || "dev";
+const CACHE = "viktix-" + VERSION;
 const SHELL = ["./", "./index.html", "./manifest.webmanifest",
                "./icon-192.png", "./icon-512.png", "./icon-maskable-512.png",
                "./apple-touch-icon.png"];
 
 self.addEventListener("install", e => {
-  e.waitUntil(
-    caches.open(CACHE).then(c => c.addAll(SHELL)).catch(() => {})
-  );
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).catch(() => {}));
 });
 
 self.addEventListener("activate", e => {
@@ -21,8 +21,10 @@ self.addEventListener("activate", e => {
 });
 
 /* Fetch handler — required for installability.
-   App shell: cache first, refreshed in the background.
-   Firebase (and any cross-origin call): straight to the network, never cached. */
+   Page HTML: network first, so a fresh deploy is picked up immediately and a stale
+   copy can never get stuck; the cache is the offline fallback.
+   Icons/manifest: cache first, refreshed in the background.
+   Firebase and anything cross-origin: network only, never cached. */
 self.addEventListener("fetch", e => {
   const req = e.request;
   if (req.method !== "GET") return;
@@ -33,6 +35,20 @@ self.addEventListener("fetch", e => {
 
   if (isSync || !sameOrigin) {
     e.respondWith(fetch(req).catch(() => new Response("", { status: 503 })));
+    return;
+  }
+
+  const isPage = req.mode === "navigate" ||
+                 (req.headers.get("accept") || "").includes("text/html");
+
+  if (isPage) {
+    e.respondWith(
+      fetch(req).then(res => {
+        const copy = res.clone();
+        caches.open(CACHE).then(c => c.put(req, copy));
+        return res;
+      }).catch(() => caches.match(req).then(hit => hit || caches.match("./index.html")))
+    );
     return;
   }
 
@@ -50,7 +66,7 @@ self.addEventListener("fetch", e => {
   );
 });
 
-/* Let the page trigger an immediate update when the user taps the green light. */
+/* Let the page activate a waiting worker when the user taps the green light. */
 self.addEventListener("message", e => {
   if (e.data === "skipWaiting") self.skipWaiting();
 });
