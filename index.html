@@ -121,6 +121,13 @@
   .empty-note{color:var(--muted);font-size:.85rem;font-style:italic;}
 
   .toolbar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px;align-items:center;}
+  .db-banner{font-size:.76rem;color:var(--muted);background:var(--card);border:1px solid var(--line);
+    border-radius:8px;padding:8px 12px;margin-bottom:16px;font-family:ui-monospace,Menlo,monospace;
+    word-break:break-all;}
+  .db-banner b{color:var(--purple);}
+  .db-banner.stale{background:#fff6e5;border-color:#f0d089;color:#8a5b00;}
+  .db-banner.stale b{color:#8a5b00;}
+  .btn-tiny{padding:3px 9px;font-size:.7rem;}
 
   /* setup panel */
   .setup{display:none;}
@@ -181,6 +188,8 @@
     <button class="btn btn-ghost" onclick="window.print()">Print / PDF</button>
     <button class="btn btn-ghost" onclick="resetAll()">Clear assignments</button>
   </div>
+
+  <div id="dbBanner" class="db-banner" style="display:none"></div>
 
   <!-- SETUP -->
   <div class="panel setup" id="setupPanel">
@@ -562,6 +571,17 @@ function applyEvent(msg, isPatch){
 let pollTimer=null, watchdog=null, liveOK=false, lastEventAt=0;
 
 function setStatus(cls, text){ connCls=cls; connText=text; paintPill(); }
+function renderDbBanner(){
+  const b=document.getElementById("dbBanner");
+  if(!b) return;
+  if(!FIREBASE_DB){ b.style.display="none"; return; }
+  const host=(function(){ try{ return new URL(FIREBASE_DB).host; }catch(e){ return FIREBASE_DB; } })();
+  const stale=!DEFAULT_DB;                       // not coming from config.js
+  b.style.display="";
+  b.className="db-banner"+(stale?" stale":"");
+  b.innerHTML=(stale?"⚠ ":"")+"Database: <b>"+esc(host)+"</b>"+
+    (stale?" — saved in this browser, not in config.js. <button class=\"btn btn-ghost btn-tiny\" onclick=\"forgetDeviceUrl()\">Forget it</button>":"");
+}
 function paintPill(){
   const pill=document.getElementById("syncPill");
   const txt=document.getElementById("syncText");
@@ -595,19 +615,31 @@ function onPillClick(){
 function setupStatus(){
   const el=document.getElementById("setupStatus");
   if(!el) return;
+  const shown = FIREBASE_DB
+    ? '<span class="tried">In use: '+esc(FIREBASE_DB)+'</span>' : '';
+  const forget = (!DEFAULT_DB && LS.get("viktix_db"))
+    ? ' <button class="btn btn-ghost btn-tiny" onclick="forgetDeviceUrl()">Forget this saved URL</button>' : '';
   if(syncProblem){
-    el.innerHTML='<b class="bad">Syncing is blocked.</b> '+esc(syncProblem);
+    el.innerHTML='<b class="bad">Syncing is blocked.</b> '+esc(syncProblem)+'<br>'+shown+forget;
     return;
   }
   if(!CFG){
-    el.innerHTML='<b class="bad">config.js did not load.</b> Make sure config.js sits next to index.html in the repo.';
+    el.innerHTML='<b class="bad">config.js did not load.</b> Make sure config.js sits next to index.html in the repo.<br>'+shown+forget;
   }else if(DEFAULT_DB){
-    el.innerHTML='<b class="good">Reading the database URL from config.js.</b> Everyone on the link shares this board.';
+    el.innerHTML='<b class="good">Reading the database URL from config.js.</b> Everyone on the link shares this board.<br>'+shown;
   }else if(FIREBASE_DB){
-    el.innerHTML='<b class="warn2">Using a URL saved on this device only.</b> Put it in config.js so other people get it too — a value saved here disappears if browser data is cleared.';
+    el.innerHTML='<b class="warn2">config.js has no URL, so this is falling back to one saved in this browser earlier.</b> '+
+      'That is almost certainly not what you want — other people get nothing, and the address may be stale. '+
+      'Put your real URL on the <code>db</code> line in config.js.<br>'+shown+forget;
   }else{
-    el.innerHTML='<b class="bad">No database URL yet, so this board is local to this device.</b> Paste your Firebase URL into config.js (preferred), or enter it below to try it on this device.';
+    el.innerHTML='<b class="bad">No database URL yet, so this board is local to this device.</b> '+
+      'Paste your Firebase URL into config.js.';
   }
+}
+function forgetDeviceUrl(){
+  LS.del("viktix_db");
+  toast("Saved URL cleared — reload to pick up config.js");
+  setupStatus();
 }
 async function runTest(){
   const el=document.getElementById("setupStatus");
@@ -914,7 +946,7 @@ function keepFocus(fn){
     if(el){ el.focus(); try{ el.setSelectionRange(s,e); }catch(err){} }
   }
 }
-function renderAll(){ renderRoster(); renderDatalist(); keepFocus(renderGames); renderWho(); renderOpen(); }
+function renderAll(){ renderDbBanner(); renderRoster(); renderDatalist(); keepFocus(renderGames); renderWho(); renderOpen(); }
 
 window.addEventListener("focus", onResume);
 window.addEventListener("online", onResume);
