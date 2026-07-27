@@ -240,16 +240,32 @@ let serverBuild = null;             // highest build any client has advertised
 let updateAvailable = false;
 let connCls = "local", connText = "Local only";
 
+/* Storage shim — opening this file straight from disk (file://) or having site data
+   blocked makes localStorage throw on access. Falling back to memory keeps the app
+   fully usable instead of killing the script before anything renders. */
+const LS = (function(){
+  let ok=true;
+  try{ const k="__viktix_test"; window.localStorage.setItem(k,"1"); window.localStorage.removeItem(k); }
+  catch(e){ ok=false; }
+  const mem={};
+  return {
+    ok:ok,
+    get(k){ try{ return ok ? window.localStorage.getItem(k) : (k in mem ? mem[k] : null); }catch(e){ return (k in mem ? mem[k] : null); } },
+    set(k,v){ try{ if(ok) window.localStorage.setItem(k,String(v)); else mem[k]=String(v); }catch(e){ mem[k]=String(v); } },
+    del(k){ try{ if(ok) window.localStorage.removeItem(k); else delete mem[k]; }catch(e){ delete mem[k]; } }
+  };
+})();
+
 /* runtime DB url: hard-coded default wins; else a value saved via the setup panel */
-let FIREBASE_DB = DEFAULT_DB || localStorage.getItem("viktix_db") || "";
+let FIREBASE_DB = DEFAULT_DB || LS.get("viktix_db") || "";
 
 /* board id comes from the ?board= link so a shared URL points everyone at one board */
 const qp = new URLSearchParams(location.search);
-let boardId = (qp.get("board") || localStorage.getItem("viktix_board") || "vikings-2026")
+let boardId = (qp.get("board") || LS.get("viktix_board") || "vikings-2026")
                 .replace(/[^A-Za-z0-9_-]/g,"-");
 qp.set("board", boardId);
-history.replaceState(null,"",location.pathname+"?"+qp.toString());
-localStorage.setItem("viktix_board", boardId);
+try{ history.replaceState(null,"",location.pathname+"?"+qp.toString()); }catch(e){}
+LS.set("viktix_board", boardId);
 
 /* ---- 2026 Minnesota Vikings HOME schedule (U.S. Bank Stadium) ---- */
 const GAMES = [
@@ -277,14 +293,14 @@ function blankState(){
 }
 function loadLocal(){
   let st=null;
-  try{ const raw=localStorage.getItem(cacheKey()); if(raw) st=JSON.parse(raw); }catch(e){}
+  try{ const raw=LS.get(cacheKey()); if(raw) st=JSON.parse(raw); }catch(e){}
   if(!st) st=blankState();
   if(!st.assign) st.assign={};
   GAMES.forEach(g=>{ st.assign[g.id]=normalizeSeats(st.assign[g.id]); });
   st.roster = tidyRoster(st.roster);
   return st;
 }
-function saveLocal(){ try{ localStorage.setItem(cacheKey(), JSON.stringify(state)); }catch(e){} }
+function saveLocal(){ try{ LS.set(cacheKey(), JSON.stringify(state)); }catch(e){} }
 
 function normalizeSeats(v){
   let arr = Array.isArray(v) ? v.slice() : (v && typeof v==="object" ? Object.values(v) : []);
@@ -423,11 +439,11 @@ function saveSetup(){
   const url = document.getElementById("dbInput").value.trim().replace(/\/+$/,"");
   const bd  = (document.getElementById("boardInput").value.trim() || "vikings-2026").replace(/[^A-Za-z0-9_-]/g,"-");
   FIREBASE_DB = url;
-  if(url) localStorage.setItem("viktix_db", url); else localStorage.removeItem("viktix_db");
+  if(url) LS.set("viktix_db", url); else LS.del("viktix_db");
   if(bd!==boardId){
-    boardId=bd; localStorage.setItem("viktix_board", boardId);
+    boardId=bd; LS.set("viktix_board", boardId);
     const q=new URLSearchParams(location.search); q.set("board",boardId);
-    history.replaceState(null,"",location.pathname+"?"+q.toString());
+    try{ history.replaceState(null,"",location.pathname+"?"+q.toString()); }catch(e){}
     state=loadLocal();
   }
   toggleSetup();
@@ -635,9 +651,25 @@ function renderAll(){ renderRoster(); renderDatalist(); keepFocus(renderGames); 
 
 window.addEventListener("focus", ()=>{ if(FIREBASE_DB && !es) cloudLoad(); });
 
-renderAll();
-paintPill();
-startStream();
+function bootError(msg){
+  const b=document.createElement("div");
+  b.style.cssText="background:#c0392b;color:#fff;padding:11px 16px;font-size:.85rem;font-weight:600;";
+  b.textContent="The board hit an error and may not be fully loaded: "+msg;
+  document.body.insertBefore(b, document.body.firstChild);
+}
+window.addEventListener("error", e=>{
+  if(!window.__viktixBooted) bootError(e.message||"unknown error");
+});
+
+try{
+  renderAll();
+  paintPill();
+  startStream();
+  window.__viktixBooted = true;
+  if(!LS.ok) toast("This browser is blocking storage — changes won't be kept after you close the tab");
+}catch(err){
+  bootError(err.message||String(err));
+}
 
 /* =========================================================
    PWA — install prompt + service worker update detection
