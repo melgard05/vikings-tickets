@@ -3,7 +3,7 @@
    so every deploy gets its own cache name and the previous cache is deleted below. */
 const VERSION = new URL(self.location.href).searchParams.get("v") || "dev";
 const CACHE = "viktix-" + VERSION;
-const SHELL = ["./", "./index.html", "./manifest.webmanifest",
+const SHELL = ["./", "./index.html", "./config.js", "./manifest.webmanifest",
                "./icon-192.png", "./icon-512.png", "./icon-maskable-512.png",
                "./apple-touch-icon.png"];
 
@@ -49,7 +49,10 @@ self.addEventListener("fetch", e => {
     return;
   }
 
+  // config.js holds the database URL — always network first so an edit takes effect
+  // immediately instead of waiting for a cache to rotate.
   const isPage = req.mode === "navigate" ||
+                 url.pathname.endsWith("/config.js") ||
                  (req.headers.get("accept") || "").includes("text/html");
 
   // Page: network first, so a fresh deploy always wins; cache is the offline fallback.
@@ -59,7 +62,7 @@ self.addEventListener("fetch", e => {
         const copy = res.clone();
         caches.open(CACHE).then(c => c.put(req, copy));
         return res;
-      }).catch(() => caches.match(req).then(hit => hit || caches.match("./index.html")))
+      }).catch(() => caches.match(req).then(hit => hit || (url.pathname.endsWith("/config.js") ? new Response("", {headers:{"Content-Type":"text/javascript"}}) : caches.match("./index.html"))))
     );
     return;
   }

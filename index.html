@@ -108,6 +108,10 @@
   .setup label{display:block;font-size:.72rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin:2px 0 6px;}
   .setup input{width:100%;margin-bottom:12px;}
   .setup .hint{font-size:.8rem;color:var(--muted);line-height:1.5;}
+  .setup-status{font-size:.83rem;line-height:1.5;margin-bottom:14px;padding:10px 12px;
+    border-radius:8px;background:var(--open);}
+  .setup-status .good{color:#1f8a4c;} .setup-status .bad{color:var(--warn);}
+  .setup-status .warn2{color:#b26a00;}
   .setup code{background:var(--open);padding:1px 5px;border-radius:4px;font-size:.78rem;}
 
   #toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);opacity:0;
@@ -138,7 +142,7 @@
       <p>4 seats · 1 preseason + 9 regular-season home games at U.S. Bank Stadium</p>
     </div>
     <button class="pill local" id="syncPill" onclick="onPillClick()" title="Sync status — tap to refresh">
-      <span class="dot"></span><span id="syncText">Local only</span><span class="build" id="buildText">Build 1</span>
+      <span class="dot"></span><span id="syncText">Local only</span><span class="build" id="buildText">Build —</span>
     </button>
   </div>
 </header>
@@ -157,6 +161,7 @@
   <!-- SETUP -->
   <div class="panel setup" id="setupPanel">
     <h2>Sync setup</h2>
+    <div id="setupStatus" class="setup-status"></div>
     <label for="dbInput">Firebase Realtime Database URL</label>
     <input type="text" id="dbInput" placeholder="https://your-project-default-rtdb.firebaseio.com">
     <label for="boardInput">Board name (shared by everyone on the link)</label>
@@ -166,11 +171,14 @@
       <button class="btn btn-ghost" onclick="toggleSetup()">Close</button>
     </div>
     <div class="hint">
-      One-time setup so a single link stays in sync for everyone:
-      create a free Firebase Realtime Database, paste its URL above (or hard-code it in the file's
-      <code>DEFAULT_DB</code> line before deploying so co-owners never see this panel), then set the
-      database rules to allow read/write. Everyone who opens your <b>Share link</b> then reads and writes
-      the same board live. Without this, the board still works but stays private to each device.
+      <b>The lasting way to set this:</b> open <code>config.js</code> in your repo, paste your
+      Firebase Realtime Database URL between the quotes on the <code>db</code> line, and commit it.
+      That file is yours — future updates to <code>index.html</code> will not overwrite it, and
+      everyone who opens your <b>Share link</b> then shares the same board.
+      <br><br>
+      The box above is a quick test that only affects this device and is lost if browser data is
+      cleared. Either way, set the database rules to allow read and write. Without a URL the board
+      still works, but stays private to each device.
     </div>
   </div>
 
@@ -210,14 +218,19 @@
 </div>
 <div id="toast"></div>
 
+<script src="config.js"></script>
 <script>
 /* =========================================================
    CONFIG — for a permanently-shared app, paste your Firebase
    Realtime Database URL here and deploy. Then every visitor
    is synced automatically without touching the setup panel.
    ========================================================= */
-const DEFAULT_DB = "";              // e.g. "https://melgard05.github.io/vikings-tickets/"
-const AUTH = "";                    // optional RTDB auth token / secret; leave "" if rules are open
+/* Settings come from config.js so that replacing this file never wipes them.
+   Order of precedence: config.js → a URL saved on this device via the setup panel. */
+const CFG = (typeof window.VIKTIX_CONFIG === "object" && window.VIKTIX_CONFIG) ? window.VIKTIX_CONFIG : null;
+const DEFAULT_DB = (CFG && typeof CFG.db === "string") ? CFG.db.trim() : "";
+const AUTH = (CFG && typeof CFG.auth === "string") ? CFG.auth.trim() : "";
+let dbSource = "none";              // where the active URL came from, shown in the setup panel
 
 /* BUILD — a short hash of this file's own bytes. Nothing to bump by hand, and unlike a
    timestamp it needs no cooperation from the host's response headers: deploy different
@@ -263,6 +276,7 @@ const LS = (function(){
 
 /* runtime DB url: hard-coded default wins; else a value saved via the setup panel */
 let FIREBASE_DB = DEFAULT_DB || LS.get("viktix_db") || "";
+dbSource = DEFAULT_DB ? "config.js" : (FIREBASE_DB ? "this device only" : "none");
 
 /* board id comes from the ?board= link so a shared URL points everyone at one board */
 const qp = new URLSearchParams(location.search);
@@ -412,16 +426,36 @@ function onPillClick(){
     else location.reload();
     return;
   }
-  if(FIREBASE_DB){ cloudLoad(); toast("Refreshed"); }
-  else toast("Local only — set up sync to share");
+  if(FIREBASE_DB){ cloudLoad(); toast("Refreshed"); return; }
+  openSetup();   // nothing to sync with yet — show the person why
 }
 
 /* ---- Setup panel ---- */
-function toggleSetup(){
+function setupStatus(){
+  const el=document.getElementById("setupStatus");
+  if(!el) return;
+  if(!CFG){
+    el.innerHTML='<b class="bad">config.js did not load.</b> Make sure config.js sits next to index.html in the repo.';
+  }else if(DEFAULT_DB){
+    el.innerHTML='<b class="good">Reading the database URL from config.js.</b> Everyone on the link shares this board.';
+  }else if(FIREBASE_DB){
+    el.innerHTML='<b class="warn2">Using a URL saved on this device only.</b> Put it in config.js so other people get it too — a value saved here disappears if browser data is cleared.';
+  }else{
+    el.innerHTML='<b class="bad">No database URL yet, so this board is local to this device.</b> Paste your Firebase URL into config.js (preferred), or enter it below to try it on this device.';
+  }
+}
+function openSetup(){
   const p=document.getElementById("setupPanel");
   document.getElementById("dbInput").value = FIREBASE_DB;
   document.getElementById("boardInput").value = boardId;
-  p.classList.toggle("show");
+  setupStatus();
+  p.classList.add("show");
+  try{ p.scrollIntoView({block:"nearest"}); }catch(e){}
+}
+function toggleSetup(){
+  const p=document.getElementById("setupPanel");
+  if(p.classList.contains("show")) p.classList.remove("show");
+  else openSetup();
 }
 function saveSetup(){
   const url = document.getElementById("dbInput").value.trim().replace(/\/+$/,"");
