@@ -46,6 +46,8 @@
   .roster-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
   .chip{display:inline-flex;align-items:center;gap:6px;background:var(--open);color:var(--purple-deep);
     border-radius:999px;padding:5px 6px 5px 12px;font-weight:600;font-size:.85rem;}
+  .chip .ct{font-size:.68rem;font-weight:800;color:var(--purple);background:rgba(79,38,131,.12);
+    border-radius:999px;padding:1px 7px;}
   .chip button{border:none;background:rgba(79,38,131,.18);color:var(--purple-deep);
     width:20px;height:20px;border-radius:50%;cursor:pointer;font-size:.8rem;line-height:1;}
   .chip button:hover{background:var(--warn);color:#fff;}
@@ -279,7 +281,7 @@ function loadLocal(){
   if(!st) st=blankState();
   if(!st.assign) st.assign={};
   GAMES.forEach(g=>{ st.assign[g.id]=normalizeSeats(st.assign[g.id]); });
-  if(!Array.isArray(st.roster)) st.roster=[];
+  st.roster = tidyRoster(st.roster);
   return st;
 }
 function saveLocal(){ try{ localStorage.setItem(cacheKey(), JSON.stringify(state)); }catch(e){} }
@@ -311,7 +313,7 @@ async function cloudLoad(){
     const r = await fetch(dbUrl(""));
     const data = await r.json();
     if(data){
-      if(Array.isArray(data.roster)) state.roster = data.roster;
+      if(Array.isArray(data.roster)) state.roster = tidyRoster(data.roster);
       if(data.assign) applyAssignMap(data.assign);
       saveLocal(); renderAll();
     }
@@ -348,7 +350,7 @@ function applyEvent(msg, isPatch){
   }
   if(path==="/"){
     if(data){
-      state.roster = Array.isArray(data.roster) ? data.roster : state.roster;
+      state.roster = Array.isArray(data.roster) ? tidyRoster(data.roster) : state.roster;
       if(data.assign) applyAssignMap(data.assign);
       if(data._meta && data._meta.build!=null) setServerBuild(data._meta.build);
     }
@@ -357,14 +359,14 @@ function applyEvent(msg, isPatch){
   } else if(path==="/_meta/build"){
     setServerBuild(data);
   } else if(path==="/roster"){
-    state.roster = Array.isArray(data) ? data : (data ? Object.values(data) : []);
+    state.roster = tidyRoster(Array.isArray(data) ? data : (data ? Object.values(data) : []));
   } else if(path==="/assign"){
     applyAssignMap(data || {});
   } else if(path.indexOf("/assign/")===0){
     const gid = path.split("/")[2];
     if(gid) state.assign[gid] = normalizeSeats(data);
   } else if(path.indexOf("/roster")===0){
-    state.roster = Array.isArray(data) ? data : (data ? Object.values(data) : []);
+    state.roster = tidyRoster(Array.isArray(data) ? data : (data ? Object.values(data) : []));
   }
   saveLocal(); renderAll();
 }
@@ -450,20 +452,36 @@ function renderRoster(){
     row.innerHTML='<span class="empty-note">No names yet — add the people who might use these seats below.</span>';
     return;
   }
-  row.innerHTML=state.roster.map((n,i)=>
-    `<span class="chip">${esc(n)}<button title="Remove" onclick="removePerson(${i})">×</button></span>`).join("");
+  row.innerHTML=state.roster.map(n=>{
+    const games=GAMES.filter(g=> state.assign[g.id].includes(n)).length;
+    return `<span class="chip">${esc(n)}<span class="ct">${games}</span>` +
+           `<button data-name="${esc(n)}" title="Remove ${esc(n)}" aria-label="Remove ${esc(n)}">×</button></span>`;
+  }).join("");
 }
+/* Delete via data-name rather than a list position, so a name is never mistaken
+   for its neighbour after sorting or after someone else's change syncs in. */
+document.getElementById("rosterRow").addEventListener("click", e=>{
+  const b = e.target.closest("button[data-name]");
+  if(b) removePerson(b.dataset.name);
+});
 function addPerson(){
-  const inp=document.getElementById("newName"); const name=inp.value.trim();
+  const inp=document.getElementById("newName"); const name=normalizeName(inp.value);
   if(!name) return;
-  if(!state.roster.includes(name)) state.roster.push(name);
+  state.roster=tidyRoster(state.roster.concat([name]));
   inp.value="";
   saveLocal(); cloudPut("roster", state.roster); renderAll();
 }
-function removePerson(i){
-  const name=state.roster[i]; state.roster.splice(i,1);
+function removePerson(name){
+  if(!name) return;
+  const games=GAMES.filter(g=> state.assign[g.id].includes(name));
+  if(games.length && !confirm(
+      "Remove "+name+"?\n\nThis also clears "+games.length+" game"+(games.length>1?"s":"")+
+      " they're assigned to ("+games.map(g=>g.short).join(", ")+")."
+    )) return;
+  state.roster=state.roster.filter(n=>n!==name);
   GAMES.forEach(g=>{ state.assign[g.id]=state.assign[g.id].map(v=> v===name?"":v); });
   saveLocal(); cloudPut("roster", state.roster); cloudPut("assign", state.assign); renderAll();
+  toast(name+" removed");
 }
 
 /* ---- Games ---- */
@@ -500,6 +518,21 @@ function renderGames(){
 /* Typed names are accepted as-is. If the name matches someone already on the roster
    (ignoring case) we reuse that spelling so counts don't split across variants;
    otherwise the new name joins the roster automatically. */
+/* Roster is kept alphabetical (case-insensitive) and free of duplicate spellings,
+   so the chips, the seat suggestions, the fill-all menu and the counts all agree. */
+function tidyRoster(list){
+  const seen=new Set(), out=[];
+  (Array.isArray(list)?list:[]).forEach(n=>{
+    const s=String(n==null?"":n).trim().replace(/\s+/g," ");
+    if(!s) return;
+    const k=s.toLowerCase();
+    if(seen.has(k)) return;
+    seen.add(k); out.push(s);
+  });
+  out.sort((a,b)=>a.localeCompare(b,undefined,{sensitivity:"base"}));
+  return out;
+}
+
 function normalizeName(v){
   const s=String(v==null?"":v).trim().replace(/\s+/g," ").slice(0,22);
   if(!s) return "";
@@ -509,7 +542,7 @@ function normalizeName(v){
 function ensureOnRoster(name){
   if(!name) return false;
   if(state.roster.some(n=>n.toLowerCase()===name.toLowerCase())) return false;
-  state.roster.push(name);
+  state.roster=tidyRoster(state.roster.concat([name]));
   return true;
 }
 function setSeat(gid,si,val){
