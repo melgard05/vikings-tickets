@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#4F2683">
 <meta name="description" content="Assign four Vikings season tickets across home games and see what's open.">
 <link rel="manifest" href="manifest.webmanifest">
@@ -22,7 +22,11 @@
   *{box-sizing:border-box;}
   body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
     background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased;}
-  header.hero{background:linear-gradient(135deg,var(--purple) 0%,var(--purple-deep) 100%);color:#fff;padding:22px 26px 20px;}
+  header.hero{background:linear-gradient(135deg,var(--purple) 0%,var(--purple-deep) 100%);color:#fff;
+    padding:22px 26px 20px;
+    padding-top:calc(22px + env(safe-area-inset-top));
+    padding-left:calc(26px + env(safe-area-inset-left));
+    padding-right:calc(26px + env(safe-area-inset-right));}
   .hero-top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;}
   .hero h1{margin:0;font-size:1.55rem;font-weight:800;letter-spacing:-.5px;}
   .hero h1 span{color:var(--gold);}
@@ -38,7 +42,10 @@
   @keyframes blip{0%,100%{box-shadow:0 0 0 0 rgba(87,224,138,.7);}50%{box-shadow:0 0 0 5px rgba(87,224,138,0);}}
   .pill .build{opacity:.72;font-weight:700;padding-left:2px;border-left:1px solid rgba(255,255,255,.28);margin-left:1px;padding-left:8px;}
   @media(prefers-reduced-motion:reduce){.pill.update .dot{animation:none;}}
-  .wrap{max-width:1040px;margin:0 auto;padding:20px 18px 70px;}
+  .wrap{max-width:1040px;margin:0 auto;padding:20px 18px 70px;
+    padding-left:calc(18px + env(safe-area-inset-left));
+    padding-right:calc(18px + env(safe-area-inset-right));
+    padding-bottom:calc(70px + env(safe-area-inset-bottom));}
 
   .panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:18px;}
   .panel h2{margin:0 0 12px;font-size:.78rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--purple);font-weight:800;}
@@ -120,7 +127,7 @@
   /* seat protection */
   input.seat.locked{background:#f4f2f8;color:var(--muted);cursor:not-allowed;border-style:dashed;}
   label.chg{display:inline-flex;align-items:center;gap:5px;margin-top:7px;margin-left:8px;
-    font-size:.7rem;font-weight:800;color:var(--muted);cursor:pointer;user-select:none;}
+    font-size:.7rem;font-weight:800;color:var(--muted);cursor:pointer;-webkit-user-select:none;user-select:none;}
   label.chg input{width:14px;height:14px;margin:0;accent-color:var(--purple);cursor:pointer;}
   label.chg.on{color:var(--purple);}
   select.fillall:disabled{opacity:.45;cursor:not-allowed;}
@@ -160,17 +167,28 @@
     font-size:.72rem;color:var(--muted);word-break:break-all;}
   .setup code{background:var(--open);padding:1px 5px;border-radius:4px;font-size:.78rem;}
 
+  .suggest{position:absolute;z-index:60;background:#fff;border:1px solid var(--line);
+    border-radius:10px;box-shadow:0 8px 24px rgba(26,22,38,.16);padding:4px;max-width:220px;}
+  .suggest button{display:block;width:100%;text-align:left;border:none;background:none;
+    padding:9px 12px;font-family:inherit;font-size:.9rem;font-weight:600;color:var(--ink);
+    border-radius:7px;cursor:pointer;}
+  .suggest button:hover,.suggest button:active{background:var(--open);color:var(--purple-deep);}
   #toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);opacity:0;
     background:var(--ink);color:#fff;padding:11px 18px;border-radius:10px;font-size:.85rem;font-weight:600;
     pointer-events:none;transition:.25s;z-index:50;max-width:90vw;text-align:center;}
   #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
 
-  @media(max-width:760px){
+  @media(max-width:900px){
     .grid2{grid-template-columns:1fr;}
     .seats{flex-wrap:wrap;} select{max-width:46%;} input.seat{width:100%;}
+    /* 16px minimum stops iOS zooming in when a field takes focus */
+    input[type=text],input.seat,select{font-size:16px;}
     thead{display:none;}
     tbody td{display:block;border:none;padding:4px 0;}
     tbody tr{display:block;border-bottom:1px solid var(--line);padding:12px 0;}
+  }
+  @media (pointer:coarse) and (min-width:901px){
+    input[type=text],input.seat,select{font-size:16px;}
   }
   @media print{
     header.hero{background:var(--purple)!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
@@ -260,7 +278,6 @@
       </thead>
       <tbody id="gamesBody"></tbody>
     </table>
-    <datalist id="rosterList"></datalist>
   </div>
 
   <!-- SUMMARY -->
@@ -275,6 +292,7 @@
   </div>
 
 </div>
+<div id="suggest" class="suggest" style="display:none"></div>
 <div id="toast"></div>
 
 <script src="config.js"></script>
@@ -868,12 +886,14 @@ function renderGames(){
       // Only names already in place are protected — open seats stay fillable,
       // so guarding assignments never gets in the way of filling a gap.
       const lock = rowLocked && !!val;
-      return `<td><input type="text" class="seat ${val?'':'open-seat'}${lock?' locked':''}" list="rosterList"
+      return `<td><input type="text" class="seat ${val?'':'open-seat'}${lock?' locked':''}"
         data-key="${g.id}:${si}" value="${esc(val)}" placeholder="— open —" maxlength="22"
         autocomplete="off" autocapitalize="words" spellcheck="false"${lock?' readonly':''}
         ${lock?`onmousedown="lockHint()" ontouchstart="lockHint()"`:''}
         onchange="setSeat('${g.id}',${si},this.value)"
-        onkeydown="if(event.key==='Enter')this.blur()"></td>`;
+        oninput="showSuggest(this)" onfocus="showSuggest(this)"
+        onblur="setTimeout(hideSuggest,180)"
+        onkeydown="if(event.key==='Enter'){hideSuggest();this.blur();} if(event.key==='Escape')hideSuggest();"></td>`;
     }).join("");
     const anyFilled=seats.some(Boolean);
     const fillLocked=rowLocked && anyFilled;
@@ -1109,10 +1129,49 @@ function toast(msg){
   const t=document.getElementById("toast"); t.textContent=msg; t.classList.add("show");
   clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove("show"),2600);
 }
-function renderDatalist(){
-  const dl=document.getElementById("rosterList");
-  if(dl) dl.innerHTML=state.roster.map(n=>`<option value="${esc(n)}"></option>`).join("");
+/* Native <datalist> is unreliable on iOS — on current versions the suggestion
+   popup can cover the field you're typing into — so suggestions are drawn here
+   instead. Same behaviour on every browser. */
+let suggestFor=null;
+function showSuggest(inp){
+  if(!inp || inp.readOnly) return hideSuggest();
+  const typed=(inp.value||"").trim().toLowerCase();
+  const names=state.roster.filter(n=> !typed || n.toLowerCase().indexOf(typed)>=0).slice(0,8);
+  const box=document.getElementById("suggest");
+  if(!box || !names.length) return hideSuggest();
+  box.innerHTML=names.map(n=>`<button type="button" data-n="${esc(n)}">${esc(n)}</button>`).join("");
+  const r=inp.getBoundingClientRect();
+  box.style.left=(r.left+window.scrollX)+"px";
+  box.style.top=(r.bottom+window.scrollY+4)+"px";
+  box.style.minWidth=Math.max(r.width,120)+"px";
+  box.style.display="block";
+  suggestFor=inp;
 }
+function hideSuggest(){
+  const box=document.getElementById("suggest");
+  if(box) box.style.display="none";
+  suggestFor=null;
+}
+function wireSuggest(){
+  const box=document.getElementById("suggest");
+  if(!box || box.__wired) return;
+  box.__wired=true;
+  // pointerdown fires before the input's blur, so the tap isn't lost
+  const pick=e=>{
+    const b=e.target.closest("button[data-n]");
+    if(!b || !suggestFor) return;
+    e.preventDefault();
+    const key=suggestFor.dataset.key||"";
+    const parts=key.split(":");
+    hideSuggest();
+    if(parts.length===2) setSeat(parts[0], Number(parts[1]), b.dataset.n);
+  };
+  box.addEventListener("pointerdown", pick);
+  box.addEventListener("mousedown", pick);
+  window.addEventListener("scroll", hideSuggest, {passive:true});
+  window.addEventListener("resize", hideSuggest);
+}
+function renderDatalist(){ wireSuggest(); }
 /* Re-rendering the table would otherwise yank the cursor out of a seat box
    mid-edit (including when a teammate's change arrives over sync). */
 function keepFocus(fn){
