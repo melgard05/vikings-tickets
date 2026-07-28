@@ -116,6 +116,23 @@
   .who-game.got::after{content:"RECEIVED";font-size:.6rem;font-weight:800;letter-spacing:.5px;
     color:var(--full);white-space:nowrap;}
   .who-weeks{color:var(--muted);font-size:.76rem;display:block;margin-top:2px;}
+
+  /* seat protection */
+  input.seat.locked{background:#f4f2f8;color:var(--muted);cursor:not-allowed;border-style:dashed;}
+  label.chg{display:inline-flex;align-items:center;gap:5px;margin-top:7px;margin-left:8px;
+    font-size:.7rem;font-weight:800;color:var(--muted);cursor:pointer;user-select:none;}
+  label.chg input{width:14px;height:14px;margin:0;accent-color:var(--purple);cursor:pointer;}
+  label.chg.on{color:var(--purple);}
+  select.fillall:disabled{opacity:.45;cursor:not-allowed;}
+
+  /* changelog */
+  .log-row{display:flex;align-items:baseline;gap:9px;padding:6px 0;border-bottom:1px solid var(--line);
+    font-size:.82rem;}
+  .log-row:last-child{border-bottom:none;}
+  .log-when{color:var(--muted);font-size:.7rem;white-space:nowrap;min-width:76px;}
+  .log-msg{flex:1;min-width:0;}
+  .log-by{font-size:.65rem;font-weight:800;color:var(--purple);background:var(--open);
+    border-radius:999px;padding:2px 8px;white-space:nowrap;}
   .open-line{padding:8px 0;border-bottom:1px solid var(--line);font-size:.86rem;}
   .open-line:last-child{border-bottom:none;} .open-line b{color:var(--warn);}
   .empty-note{color:var(--muted);font-size:.85rem;font-style:italic;}
@@ -197,6 +214,8 @@
     <div id="setupStatus" class="setup-status"></div>
     <label for="dbInput">Firebase Realtime Database URL</label>
     <input type="text" id="dbInput" placeholder="https://your-project-default-rtdb.firebaseio.com">
+    <label for="whoInput">Your name (shown against your changes in the changelog)</label>
+    <input type="text" id="whoInput" placeholder="e.g. Kelly" maxlength="22">
     <label for="boardInput">Board name (shared by everyone on the link)</label>
     <input type="text" id="boardInput" placeholder="vikings-2026">
     <div style="display:flex;gap:10px;margin-bottom:12px;">
@@ -248,6 +267,11 @@
   <div class="grid2">
     <div class="panel"><h2>Who's going</h2><div id="whoGoing"></div></div>
     <div class="panel"><h2>Open seats</h2><div id="openSeats"></div></div>
+  </div>
+
+  <div class="panel">
+    <h2>Changelog</h2>
+    <div id="changelog"></div>
   </div>
 
 </div>
@@ -383,6 +407,7 @@ const GAMES = [
   {id:"w18", wk:"Week 18", short:"W18",opp:"Chicago Bears",        date:"Date TBD (Jan '27)",time:"TBD",        tag:""}
 ];
 const SEATS = 4;
+const LOG_MAX = 40;   // changelog is capped so the synced payload stays small
 const cacheKey = () => "viktix_2026_" + boardId;
 
 /* ---- State ---- */
@@ -391,11 +416,24 @@ let es = null;
 
 function blankState(){
   const assign = {}; GAMES.forEach(g=> assign[g.id]=["","","",""]);
-  return { roster:["Kelly","Casey"], assign, received:{} };
+  return { roster:["Kelly","Casey"], assign, received:{}, log:[] };
 }
 /* received[gameId] = [names who have their tickets in hand].
    Names are stored as values rather than keys so that a name containing
    characters Firebase forbids in a key can never break syncing. */
+function normalizeLog(v){
+  const arr = Array.isArray(v) ? v : (v && typeof v==="object" ? Object.values(v) : []);
+  return arr.filter(e=>e && typeof e==="object" && e.m)
+            .map(e=>({t:Number(e.t)||0, by:String(e.by||""), m:String(e.m)}))
+            .sort((a,b)=>a.t-b.t).slice(-LOG_MAX);
+}
+function whoAmI(){ return LS.get("viktix_who") || ""; }
+function logEvent(msg){
+  if(!Array.isArray(state.log)) state.log=[];
+  state.log.push({t:Date.now(), by:whoAmI(), m:msg});
+  state.log=state.log.slice(-LOG_MAX);
+  saveLocal(); cloudPut("log", state.log); renderLog();
+}
 function normalizeReceived(v){
   const arr = Array.isArray(v) ? v : (v && typeof v==="object" ? Object.values(v) : []);
   const out=[], seen=new Set();
@@ -410,6 +448,7 @@ function loadLocal(){
   GAMES.forEach(g=>{ st.assign[g.id]=normalizeSeats(st.assign[g.id]); });
   if(!st.received || typeof st.received!=="object") st.received={};
   GAMES.forEach(g=>{ st.received[g.id]=normalizeReceived(st.received[g.id]); });
+  st.log = normalizeLog(st.log);
   st.roster = tidyRoster(st.roster);
   return st;
 }
@@ -417,7 +456,7 @@ function loadLocal(){
    few seconds, so doing that unconditionally burns a phone's CPU continuously and
    makes the UI stutter. Repaint only when the data really changed. */
 function stateSig(){
-  try{ return JSON.stringify([state.roster, state.assign, state.received]); }
+  try{ return JSON.stringify([state.roster, state.assign, state.received, (state.log||[]).length]); }
   catch(e){ return "sig-"+Math.random(); }
 }
 function saveLocal(){ try{ LS.set(cacheKey(), JSON.stringify(state)); }catch(e){} }
@@ -465,6 +504,7 @@ async function cloudLoad(){
       if(Array.isArray(data.roster)) state.roster = tidyRoster(data.roster);
       if(data.assign) applyAssignMap(data.assign);
       if(data.received) applyReceivedMap(data.received);
+      if(data.log) state.log=normalizeLog(data.log);
       if(stateSig()!==before){ saveLocal(); renderAll(); }
     }
   }catch(e){ /* empty or unparseable body is fine — an empty board reads as null */ }
@@ -598,26 +638,29 @@ function applyEvent(msg, isPatch){
   }
   if(path==="/"){
     if(data){
-      state.roster = Array.isArray(data.roster) ? tidyRoster(data.roster) : state.roster;
-      if(data.assign) applyAssignMap(data.assign);
+      if(Array.isArray(data.roster)) state.roster = tidyRoster(data.roster);
+      if(data.assign)   applyAssignMap(data.assign);
+      if(data.received) applyReceivedMap(data.received);
+      if(data.log)      state.log = normalizeLog(data.log);
     }
-    } else if(path==="/roster"){
+  } else if(path==="/roster"){
     state.roster = tidyRoster(Array.isArray(data) ? data : (data ? Object.values(data) : []));
   } else if(path==="/assign"){
     applyAssignMap(data || {});
   } else if(path==="/received"){
     applyReceivedMap(data || {});
+  } else if(path==="/log"){
+    state.log = normalizeLog(data);
   } else if(path.indexOf("/received/")===0){
     const rid = path.split("/")[2];
     if(rid) state.received[rid] = normalizeReceived(data);
   } else if(path.indexOf("/assign/")===0){
     const gid = path.split("/")[2];
     if(gid) state.assign[gid] = normalizeSeats(data);
-  } else if(path.indexOf("/roster")===0){
-    state.roster = tidyRoster(Array.isArray(data) ? data : (data ? Object.values(data) : []));
   }
   if(stateSig()!==sigBefore){ saveLocal(); renderAll(); }
 }
+
 let pollTimer=null, watchdog=null, liveOK=false, lastEventAt=0;
 
 function setStatus(cls, text){ connCls=cls; connText=text; paintPill(); }
@@ -730,6 +773,7 @@ function openSetup(){
   const p=document.getElementById("setupPanel");
   document.getElementById("dbInput").value = FIREBASE_DB;
   document.getElementById("boardInput").value = boardId;
+  document.getElementById("whoInput").value = whoAmI();
   setupStatus();
   p.classList.add("show");
   try{ p.scrollIntoView({block:"nearest"}); }catch(e){}
@@ -740,6 +784,8 @@ function toggleSetup(){
   else openSetup();
 }
 function saveSetup(){
+  const who = document.getElementById("whoInput").value.trim().slice(0,22);
+  if(who) LS.set("viktix_who", who); else LS.del("viktix_who");
   const url = normalizeDbUrl(document.getElementById("dbInput").value);
   const bd  = (document.getElementById("boardInput").value.trim() || "vikings-2026").replace(/[^A-Za-z0-9_-]/g,"-");
   FIREBASE_DB = url;
@@ -789,7 +835,7 @@ function addPerson(){
   if(!name) return;
   state.roster=tidyRoster(state.roster.concat([name]));
   inp.value="";
-  saveLocal(); cloudPut("roster", state.roster); renderAll();
+  saveLocal(); cloudPut("roster", state.roster); logEvent(name+" added to the roster"); renderAll();
 }
 function removePerson(name){
   if(!name) return;
@@ -805,7 +851,7 @@ function removePerson(name){
       state.received[g.id]=state.received[g.id].filter(n=>n!==name);
   });
   saveLocal(); cloudPut("roster", state.roster); cloudPut("assign", state.assign);
-  cloudPut("received", state.received); renderAll();
+  cloudPut("received", state.received); logEvent(name+" removed from the roster"); renderAll();
   toast(name+" removed");
 }
 
@@ -817,13 +863,25 @@ function renderGames(){
     const filled=seats.filter(Boolean).length, open=SEATS-filled;
     const pips=seats.map(s=>`<span class="pip ${s?'filled':''}"></span>`).join("");
     const status=open===0?`<span class="status full">FULL</span>`:`<span class="status has-open">${open} open</span>`;
+    const rowLocked = !unlocked[g.id];
     const seatCells=seats.map((val,si)=>{
-      return `<td><input type="text" class="seat ${val?'':'open-seat'}" list="rosterList"
+      // Only names already in place are protected — open seats stay fillable,
+      // so guarding assignments never gets in the way of filling a gap.
+      const lock = rowLocked && !!val;
+      return `<td><input type="text" class="seat ${val?'':'open-seat'}${lock?' locked':''}" list="rosterList"
         data-key="${g.id}:${si}" value="${esc(val)}" placeholder="— open —" maxlength="22"
-        autocomplete="off" autocapitalize="words" spellcheck="false"
+        autocomplete="off" autocapitalize="words" spellcheck="false"${lock?' readonly':''}
+        ${lock?`onmousedown="lockHint()" ontouchstart="lockHint()"`:''}
         onchange="setSeat('${g.id}',${si},this.value)"
         onkeydown="if(event.key==='Enter')this.blur()"></td>`;
     }).join("");
+    const anyFilled=seats.some(Boolean);
+    const fillLocked=rowLocked && anyFilled;
+    const changeBox=anyFilled
+      ? `<label class="chg${rowLocked?'':' on'}" title="Unlock this game's seats">
+           <input type="checkbox" ${rowLocked?'':'checked'}
+                  onchange="setUnlocked('${g.id}',this.checked)"> Change</label>`
+      : "";
     const fillOpts=['<option value="">Assign all 4 to…</option>']
       .concat(state.roster.map(n=>`<option value="${esc(n)}">${esc(n)}</option>`))
       .concat(['<option value="__clear__">— all open —</option>']).join("");
@@ -833,7 +891,8 @@ function renderGames(){
         <div class="wk">${g.wk}${tag}</div>
         <div class="matchup">vs ${esc(g.opp)}</div>
         <div class="meta">${g.date} · ${g.time}</div>
-        <select class="fillall" onchange="fillAll('${g.id}',this.value)">${fillOpts}</select>
+        <select class="fillall" ${fillLocked?'disabled':''} onchange="fillAll('${g.id}',this.value)">${fillOpts}</select>
+        ${changeBox}
       </td>
       ${seatCells}
       <td><span class="pips">${pips}</span>${status}</td>
@@ -870,6 +929,16 @@ function ensureOnRoster(name){
   state.roster=tidyRoster(state.roster.concat([name]));
   return true;
 }
+/* Which games are currently unlocked for editing. Deliberately in memory only —
+   not saved and not synced — so reloading, or another person's device, always
+   starts with existing assignments protected. */
+const unlocked = {};
+function setUnlocked(gid,on){
+  if(on) unlocked[gid]=true; else delete unlocked[gid];
+  renderAll();
+}
+function lockHint(){ toast("Tick “Change” on this game to edit its seats"); }
+
 /* ---- Tickets received ---- */
 function hasReceived(gid,name){
   const a=state.received[gid];
@@ -881,7 +950,10 @@ function setReceived(gid,name,on){
   if(on && i<0) a.push(name);
   if(!on && i>=0) a.splice(i,1);
   state.received[gid]=a;
-  saveLocal(); cloudPut("received/"+gid, a); renderAll();
+  saveLocal(); cloudPut("received/"+gid, a);
+  const g=GAMES.find(x=>x.id===gid);
+  logEvent(name+(on?" received tickets for ":" marked NOT received for ")+g.short);
+  renderAll();
   toast(on ? name+" — tickets received" : name+" — marked not received");
 }
 /* A person who is no longer in a game shouldn't keep a received tick for it. */
@@ -910,6 +982,9 @@ document.getElementById("whoGoing").addEventListener("change", e=>{
 
 function setSeat(gid,si,val){
   const name=normalizeName(val);
+  const prev=state.assign[gid][si];
+  if(prev===name) return;                      // nothing actually changed
+  const g=GAMES.find(x=>x.id===gid);
   state.assign[gid][si]=name;
   const grew=ensureOnRoster(name);
   const pruned=pruneReceived(gid);
@@ -917,11 +992,15 @@ function setSeat(gid,si,val){
   cloudPut("assign/"+gid, state.assign[gid]);
   if(grew) cloudPut("roster", state.roster);
   if(pruned) cloudPut("received/"+gid, state.received[gid]);
+  logEvent(!name ? g.short+" seat "+(si+1)+" cleared (was "+prev+")"
+         : !prev ? g.short+" seat "+(si+1)+" → "+name
+                 : g.short+" seat "+(si+1)+" changed from "+prev+" to "+name);
   renderAll();
 }
 function fillAll(gid,val){
   if(val==="") return;
   const name=(val==="__clear__")?"":normalizeName(val);
+  const gg=GAMES.find(x=>x.id===gid);
   state.assign[gid]=[name,name,name,name];
   const grew=ensureOnRoster(name);
   const pruned=pruneReceived(gid);
@@ -929,6 +1008,7 @@ function fillAll(gid,val){
   cloudPut("assign/"+gid, state.assign[gid]);
   if(grew) cloudPut("roster", state.roster);
   if(pruned) cloudPut("received/"+gid, state.received[gid]);
+  logEvent(name ? "all 4 "+gg.short+" seats → "+name : gg.short+" cleared — all 4 seats open");
   renderAll();
 }
 
@@ -965,6 +1045,29 @@ function renderWho(){
     </div>`;
   }).join("");
 }
+function fmtWhen(t){
+  if(!t) return "";
+  const d=new Date(t), diff=(Date.now()-t)/1000;
+  if(diff<60) return "just now";
+  if(diff<3600) return Math.floor(diff/60)+"m ago";
+  if(diff<86400) return Math.floor(diff/3600)+"h ago";
+  return d.toLocaleDateString(undefined,{month:"short",day:"numeric"})+", "+
+         d.toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit"});
+}
+function renderLog(){
+  const el=document.getElementById("changelog");
+  if(!el) return;
+  const rows=(Array.isArray(state.log)?state.log:[]).slice().sort((a,b)=>b.t-a.t);
+  if(!rows.length){
+    el.innerHTML='<span class="empty-note">No changes recorded yet. Assignments and ticket handovers will appear here.</span>';
+    return;
+  }
+  el.innerHTML=rows.map(e=>`<div class="log-row">
+      <span class="log-when">${esc(fmtWhen(e.t))}</span>
+      <span class="log-msg">${esc(e.m)}</span>
+      ${e.by?`<span class="log-by">${esc(e.by)}</span>`:''}
+    </div>`).join("");
+}
 function renderOpen(){
   const el=document.getElementById("openSeats");
   const lines=GAMES.map(g=>{
@@ -995,7 +1098,8 @@ function cell(v){ v=(v==null?"":String(v)); return /[",\n]/.test(v)?'"'+v.replac
 function resetAll(){
   if(!confirm("Clear all seat assignments? Seat-holder names stay.")) return;
   GAMES.forEach(g=>{ state.assign[g.id]=["","","",""]; state.received[g.id]=[]; });
-  saveLocal(); cloudPut("assign", state.assign); cloudPut("received", state.received); renderAll();
+  saveLocal(); cloudPut("assign", state.assign); cloudPut("received", state.received);
+  logEvent("all seat assignments cleared"); renderAll();
 }
 
 /* ---- utils ---- */
@@ -1021,7 +1125,7 @@ function keepFocus(fn){
     if(el){ el.focus(); try{ el.setSelectionRange(s,e); }catch(err){} }
   }
 }
-function renderAll(){ renderDbBanner(); renderRoster(); renderDatalist(); keepFocus(renderGames); renderWho(); renderOpen(); }
+function renderAll(){ renderDbBanner(); renderRoster(); renderDatalist(); keepFocus(renderGames); renderWho(); renderOpen(); renderLog(); }
 
 window.addEventListener("focus", onResume);
 window.addEventListener("online", onResume);
