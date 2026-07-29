@@ -889,11 +889,10 @@ function renderGames(){
       return `<td><input type="text" class="seat ${val?'':'open-seat'}${lock?' locked':''}"
         data-key="${g.id}:${si}" value="${esc(val)}" placeholder="— open —" maxlength="22"
         autocomplete="off" autocapitalize="words" spellcheck="false"${lock?' readonly':''}
-        ${lock?`onmousedown="lockHint()" ontouchstart="lockHint()"`:''}
         onchange="setSeat('${g.id}',${si},this.value)"
         oninput="showSuggest(this)" onfocus="showSuggest(this)"
         onblur="setTimeout(hideSuggest,180)"
-        onkeydown="if(event.key==='Enter'){hideSuggest();this.blur();} if(event.key==='Escape')hideSuggest();"></td>`;
+        onkeydown="seatKey(event,this)"></td>`;
     }).join("");
     const anyFilled=seats.some(Boolean);
     const fillLocked=rowLocked && anyFilled;
@@ -957,7 +956,24 @@ function setUnlocked(gid,on){
   if(on) unlocked[gid]=true; else delete unlocked[gid];
   renderAll();
 }
-function lockHint(){ toast("Tick “Change” on this game to edit its seats"); }
+let lockHintAt=0;
+function lockHint(){
+  const now=Date.now();
+  if(now-lockHintAt < 4000) return;      // never nag repeatedly
+  lockHintAt=now;
+  toast("Tick “Change” on this game to edit its seats");
+}
+/* Only an actual attempt to type in a protected seat should say anything.
+   Touching one — including starting a scroll on one — says nothing. */
+function seatKey(e,inp){
+  if(e.key==="Enter"){ hideSuggest(); inp.blur(); return; }
+  if(e.key==="Escape"){ hideSuggest(); return; }
+  if(!inp.readOnly) return;
+  if(e.key && (e.key.length===1 || e.key==="Backspace" || e.key==="Delete")){
+    if(e.metaKey||e.ctrlKey||e.altKey) return;
+    lockHint();
+  }
+}
 
 /* ---- Tickets received ---- */
 function hasReceived(gid,name){
